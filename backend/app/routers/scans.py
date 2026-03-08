@@ -15,10 +15,12 @@ from app.services.scanner import (
     collect_key_files,
     collect_top_level_dirs,
     count_extensions,
+    detect_components,
     detect_frameworks,
     detect_languages,
     extract_zip,
     infer_project_type,
+    unwrap_root_dir,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/scan", tags=["scans"])
@@ -46,17 +48,21 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
     )
     extract_zip(upload.storage_path, workspace_path)
 
-    # 4. Walk files and collect inventory
-    files = collect_file_inventory(workspace_path)
+    # 3b. Unwrap single wrapper folder (e.g. PROJECT-main/)
+    effective_root = unwrap_root_dir(workspace_path)
+
+    # 4. Walk files and collect inventory (relative to effective root)
+    files = collect_file_inventory(effective_root)
 
     # 5. Detect languages/frameworks and build richer summary fields
     languages = detect_languages(files)
     frameworks = detect_frameworks(files)
     key_files = collect_key_files(files)
-    top_level_dirs = collect_top_level_dirs(workspace_path)
+    top_level_dirs = collect_top_level_dirs(effective_root)
     extension_counts = count_extensions(files)
     entry_points = collect_entry_points(files)
-    project_type = infer_project_type(files, languages, frameworks, top_level_dirs)
+    components = detect_components(top_level_dirs, files, key_files, entry_points)
+    project_type = infer_project_type(files, languages, frameworks, top_level_dirs, components)
 
     # 6. Save scan result
     scan = Scan(
@@ -72,6 +78,7 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
         extension_counts=extension_counts,
         project_type=project_type,
         entry_points=entry_points,
+        components=components,
     )
     db.add(scan)
     db.commit()

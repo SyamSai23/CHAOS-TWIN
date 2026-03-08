@@ -6,6 +6,7 @@ from app.models.graph_edge import GraphEdge
 from app.models.graph_node import GraphNode
 from app.models.project import Project
 from app.models.scan import Scan
+from app.models.simulation_run import SimulationRun
 from app.schemas import GraphEdgeResponse, GraphNodeResponse, ProjectGraphResponse
 from app.services.graph_builder import build_graph_from_scan
 
@@ -27,6 +28,8 @@ def generate_project_graph(project_id: str, db: Session = Depends(get_db)):
     if not latest_scan:
         raise HTTPException(status_code=404, detail="No scans found for this project")
 
+    # Delete old graph and any simulation runs that reference it
+    db.query(SimulationRun).filter(SimulationRun.project_id == project_id).delete()
     db.query(GraphEdge).filter(GraphEdge.project_id == project_id).delete()
     db.query(GraphNode).filter(GraphNode.project_id == project_id).delete()
     db.commit()

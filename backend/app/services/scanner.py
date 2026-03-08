@@ -1,5 +1,6 @@
 import os
 import zipfile
+from typing import Optional
 
 # Folders/files to ignore from scan inventory and summaries.
 IGNORED_PATH_PARTS: set[str] = {
@@ -112,11 +113,13 @@ KEY_FILE_NAMES: set[str] = {
 # Entry points that are meaningful at any depth (true startup files)
 DEEP_ENTRY_POINT_NAMES: set[str] = {
     "main.py", "app.py", "server.py", "manage.py", "Program.cs",
+    "__main__.py",
 }
 
 # JS/TS entry points only meaningful at root level or inside src/
 SHALLOW_ENTRY_POINT_NAMES: set[str] = {
-    "index.js", "index.ts", "index.tsx", "main.js", "main.ts", "main.tsx",
+    "index.js", "index.ts", "index.tsx", "index.jsx",
+    "main.js", "main.ts", "main.tsx", "main.jsx",
     "server.js", "server.ts", "app.js", "app.ts",
 }
 
@@ -214,6 +217,27 @@ def collect_top_level_dirs(root_dir: str) -> list[str]:
     return sorted(dirs)
 
 
+def unwrap_root_dir(root_dir: str) -> str:
+    """If root contains only a single wrapper folder (no files), return the inner path.
+
+    Many ZIPs extract with one outer folder like PROJECT-main/.
+    This unwraps that so top_level_dirs and file paths are more meaningful.
+    """
+    try:
+        entries = os.listdir(root_dir)
+    except OSError:
+        return root_dir
+    visible = [
+        e for e in entries
+        if not e.startswith(".") and e not in IGNORED_PATH_PARTS
+    ]
+    dirs = [e for e in visible if os.path.isdir(os.path.join(root_dir, e))]
+    files = [e for e in visible if os.path.isfile(os.path.join(root_dir, e))]
+    if len(dirs) == 1 and len(files) == 0:
+        return os.path.join(root_dir, dirs[0])
+    return root_dir
+
+
 def count_extensions(files: list[dict]) -> dict[str, int]:
     """Count how many files exist per extension (skip extensionless files)."""
     counts: dict[str, int] = {}
@@ -226,20 +250,119 @@ def count_extensions(files: list[dict]) -> dict[str, int]:
 
 
 def collect_entry_points(files: list[dict]) -> list[str]:
-    """Find likely startup entry files. JS/TS index files only count at root or src/."""
+    """Find likely startup entry files across multiple components.
+
+    DEEP entry points (main.py, app.py, etc.) are found up to 5 levels deep.
+    SHALLOW entry points (index.js, main.tsx, etc.) are found if:
+      - Their parent directory is 'src' (at any depth), OR
+      - They are within 3 levels of root (covers component roots like backend/server.js)
+    """
     result: set[str] = set()
     for f in files:
         path = f["path"]
         filename = os.path.basename(path)
-        # Depth: root-level has 1 part, src/ has 2 parts with parts[0]=="src"
         parts = path.replace("\\", "/").split("/")
-        is_root_or_src = len(parts) == 1 or (len(parts) == 2 and parts[0] == "src")
+        depth = len(parts)
+        parent = parts[-2] if depth >= 2 else ""
 
         if filename in DEEP_ENTRY_POINT_NAMES:
-            result.add(path)
-        elif filename in SHALLOW_ENTRY_POINT_NAMES and is_root_or_src:
-            result.add(path)
+            if depth <= 5:
+                result.add(path)
+        elif filename in SHALLOW_ENTRY_POINT_NAMES:
+            if parent == "src" or depth <= 3:
+                result.add(path)
     return sorted(result)
+
+
+def detect_components(
+    top_level_dirs: list[str],
+    files: list[dict],
+    key_files: list[str],
+    entry_points: list[str],
+) -> list[dict]:
+    """Detect distinct project components from directory layout and file markers.
+
+    Each component dict has at minimum {"name": str, "type": str}.
+    Types: frontend, backend, service, data, infra, docs, scripts, config, other.
+    """
+    FRONTEND_DIR_NAMES = {"frontend", "client", "web", "ui"}
+    BACKEND_DIR_NAMES = {"backend", "server", "api"}
+    SERVICE_DIR_NAMES = {"scheduler", "worker", "cron", "jobs"}
+    DATA_DIR_NAMES = {"data", "datasets", "backtest_data", "models", "ml"}
+    INFRA_DIR_NAMES = {"infra", "infrastructure", "deploy", "terraform", "k8s", "helm"}
+    DOCS_DIR_NAMES = {"docs", "documentation", "doc"}
+    SCRIPTS_DIR_NAMES = {"scripts", "tools"}
+
+    FRONTEND_FILE_MARKERS = {
+        "vite.config.ts", "vite.config.js",
+        "next.config.js", "next.config.mjs",
+        "angular.json", "nuxt.config.js", "nuxt.config.ts",
+    }
+    BACKEND_FILE_MARKERS = {
+        "requirements.txt", "pyproject.toml", "Pipfile",
+        "go.mod", "Cargo.toml", "pom.xml", "build.gradle",
+        "Gemfile", "composer.json", "manage.py",
+    }
+
+    components: list[dict] = []
+
+    for d in top_level_dirs:
+        prefix = d + "/"
+        dir_files = [f for f in files if f["path"].startswith(prefix)]
+        if not dir_files:
+            continue
+
+        dir_basenames = {os.path.basename(f["path"]) for f in dir_files}
+        dir_entry_pts = [ep for ep in entry_points if ep.startswith(prefix)]
+        d_lower = d.lower()
+
+        has_fe_markers = bool(dir_basenames & FRONTEND_FILE_MARKERS)
+        has_fe_src = any(
+            "/src/" in f["path"]
+            and os.path.basename(f["path"]) in {
+                "main.tsx", "main.jsx", "index.tsx", "index.jsx",
+                "App.tsx", "App.jsx",
+            }
+            for f in dir_files
+        )
+        has_be_markers = bool(dir_basenames & BACKEND_FILE_MARKERS)
+        has_pkg_json = "package.json" in dir_basenames
+        node_server = bool(dir_basenames & {"server.js", "server.ts", "app.js", "app.ts"})
+
+        # Classify by strongest signal first
+        if has_fe_markers or has_fe_src:
+            comp_type = "frontend"
+        elif has_be_markers:
+            comp_type = "backend"
+        elif has_pkg_json and node_server:
+            comp_type = "backend"
+        elif has_pkg_json and d_lower in FRONTEND_DIR_NAMES:
+            comp_type = "frontend"
+        elif d_lower in FRONTEND_DIR_NAMES:
+            comp_type = "frontend"
+        elif d_lower in BACKEND_DIR_NAMES:
+            comp_type = "backend"
+        elif d_lower in SERVICE_DIR_NAMES or dir_entry_pts:
+            comp_type = "service"
+        elif d_lower in DATA_DIR_NAMES:
+            comp_type = "data"
+        elif d_lower in INFRA_DIR_NAMES:
+            comp_type = "infra"
+        elif d_lower in DOCS_DIR_NAMES:
+            comp_type = "docs"
+        elif d_lower in SCRIPTS_DIR_NAMES:
+            comp_type = "scripts"
+        elif d_lower.startswith("."):
+            comp_type = "config"
+        else:
+            comp_type = "other"
+
+        component: dict = {"name": d, "type": comp_type}
+        if dir_entry_pts:
+            component["entry_points"] = dir_entry_pts
+        components.append(component)
+
+    return components
 
 
 def infer_project_type(
@@ -247,28 +370,54 @@ def infer_project_type(
     languages: list[str],
     frameworks: list[str],
     top_level_dirs: list[str],
+    components: Optional[list[dict]] = None,
 ) -> str:
-    """Infer a simple project type label using file/layout heuristics."""
+    """Infer project type using component analysis with file-level fallback."""
+
+    # --- Phase 1: component-based classification ---
+    if components:
+        comp_types = {c["type"] for c in components}
+        meaningful = [c for c in components if c["type"] in {"frontend", "backend", "service"}]
+
+        has_fe = "frontend" in comp_types
+        has_be = "backend" in comp_types
+        has_svc = "service" in comp_types
+
+        if len(meaningful) >= 3 or (has_fe and has_be and has_svc):
+            return "monorepo / multi-component app"
+        if has_fe and (has_be or has_svc):
+            return "full-stack app"
+        if has_be and has_svc:
+            return "monorepo / multi-component app"
+        if has_fe:
+            return "frontend web app"
+        if has_be:
+            return "backend API"
+        if has_svc:
+            return "backend API"
+
+    # --- Phase 2: file-level fallback (flat repos, no component dirs) ---
     file_paths = [f["path"] for f in files]
     file_names = [os.path.basename(path) for path in file_paths]
 
     has_frontend_signals = (
         "package.json" in file_names
         and (
-            "src/main.tsx" in file_paths
-            or "src/index.tsx" in file_paths
-            or "vite.config.ts" in file_names
-            or "vite.config.js" in file_names
-            or "next.config.js" in file_names
-            or "next.config.mjs" in file_names
-            or "angular.json" in file_names
+            any(name in file_names for name in (
+                "vite.config.ts", "vite.config.js",
+                "next.config.js", "next.config.mjs", "angular.json",
+            ))
+            or any(
+                path in ("src/main.tsx", "src/index.tsx", "src/main.jsx", "src/index.jsx")
+                for path in file_paths
+            )
         )
     )
 
     has_backend_signals = (
         "requirements.txt" in file_names
         or "pyproject.toml" in file_names
-        or "main.py" in file_names
+        or "manage.py" in file_names
         or "app.py" in file_names
         or "server.py" in file_names
         or "server.js" in file_names
@@ -281,17 +430,16 @@ def infer_project_type(
         name.endswith(".csproj") for name in file_names
     )
 
-    # Simple monorepo signal: common folder conventions or multiple package manifests.
-    package_json_count = sum(1 for p in file_paths if os.path.basename(p) == "package.json")
+    package_json_count = sum(1 for n in file_names if n == "package.json")
     has_monorepo_layout = (
         "apps" in top_level_dirs
         or "packages" in top_level_dirs
         or "services" in top_level_dirs
-        or package_json_count >= 2
+        or package_json_count >= 3
     )
 
     if has_monorepo_layout:
-        return "monorepo"
+        return "monorepo / multi-component app"
     if has_frontend_signals and (has_backend_signals or has_dotnet_signals):
         return "full-stack app"
     if has_dotnet_signals:
@@ -301,7 +449,6 @@ def infer_project_type(
     if has_frontend_signals:
         return "frontend web app"
 
-    # Lightweight fallback for small scripts/data-heavy repos.
     ext_counts = count_extensions(files)
     if "Python" in languages or ".ipynb" in ext_counts:
         return "script/data project"

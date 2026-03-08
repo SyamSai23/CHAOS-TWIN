@@ -41,6 +41,7 @@ class ScanResponse(BaseModel):
     extension_counts: dict[str, int]
     project_type: str
     entry_points: list[str]
+    components: list[dict] = []
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -77,3 +78,17 @@ class ProjectGraphResponse(BaseModel):
     edge_count: int
     nodes: list[GraphNodeResponse]
     edges: list[GraphEdgeResponse]
+
+
+class SimulationRunResponse(BaseModel):
+    id: str
+    project_id: str
+    scan_id: str
+    failed_node_id: str
+    severity: str
+    summary: str
+    impacted_nodes: list[dict]
+    result: dict
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

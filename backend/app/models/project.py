@@ -24,9 +24,11 @@ class Project(Base):
     scans: Mapped[list["Scan"]] = relationship(back_populates="project")
     graph_nodes: Mapped[list["GraphNode"]] = relationship(back_populates="project")
     graph_edges: Mapped[list["GraphEdge"]] = relationship(back_populates="project")
+    simulation_runs: Mapped[list["SimulationRun"]] = relationship(back_populates="project")
 
 
 from app.models.upload import Upload  # noqa: E402, F401 — resolve circular import
 from app.models.scan import Scan  # noqa: E402, F401
 from app.models.graph_node import GraphNode  # noqa: E402, F401
 from app.models.graph_edge import GraphEdge  # noqa: E402, F401
+from app.models.simulation_run import SimulationRun  # noqa: E402, F401

@@ -31,6 +31,7 @@ class Scan(Base):
     extension_counts: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False)
     project_type: Mapped[str] = mapped_column(String, nullable=False)
     entry_points: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    components: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

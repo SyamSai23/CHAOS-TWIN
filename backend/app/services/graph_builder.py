@@ -122,11 +122,35 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         "cargo.toml",
     }
 
+    frontend_tool_frameworks = {
+        "TypeScript",
+        "Vite",
+        "Next.js",
+        "Angular",
+    }
+    backend_tool_frameworks = {
+        "Python (pip)",
+        "Python (modern)",
+        "Python (pipenv)",
+        "Django",
+        "Go modules",
+        "Java (Maven)",
+        "Java (Gradle)",
+        "Rust (Cargo)",
+    }
+    shared_tool_frameworks = {
+        "Docker",
+        "Docker Compose",
+        "Environment config",
+        "Make",
+    }
+
     has_frontend_entry = any(_is_frontend_entry_path(ep) for ep in entry_points)
     has_backend_entry = any(
         os.path.basename(ep).lower() in {"main.py", "app.py", "server.py", "manage.py", "program.cs"}
         for ep in entry_points
     )
+    has_backend_node_entry = any(ep.endswith((".js", ".ts")) for ep in entry_points)
 
     has_frontend = (
         scan.project_type in {"frontend web app", "full-stack app"}
@@ -184,24 +208,49 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
     database_key = add_node("database", "Database") if has_database else ""
 
     runtime_keys: dict[str, str] = {}
-    if "Python" in languages or any(name.startswith("Python") for name in frameworks):
+    has_python_runtime_signal = "Python" in languages or any(name.startswith("Python") for name in frameworks)
+    has_node_runtime_signal = (
+        any(name in languages for name in {"JavaScript", "TypeScript", "TypeScript (JSX)", "JavaScript (JSX)"})
+        or "Node.js" in frameworks
+    )
+    has_dotnet_runtime_signal = "C#" in languages or any(ep.endswith("Program.cs") for ep in entry_points)
+    has_docker_runtime_signal = "Docker" in frameworks
+
+    if has_python_runtime_signal:
         runtime_keys["python"] = add_node("runtime", "Python Runtime")
-    if any(name in languages for name in {"JavaScript", "TypeScript", "TypeScript (JSX)", "JavaScript (JSX)"}) or "Node.js" in frameworks:
+    if has_node_runtime_signal:
         runtime_keys["node"] = add_node("runtime", "Node.js Runtime")
-    if "C#" in languages or any(ep.endswith("Program.cs") for ep in entry_points):
+    if has_dotnet_runtime_signal:
         runtime_keys["dotnet"] = add_node("runtime", ".NET Runtime")
-    if "Docker" in frameworks:
+    if has_docker_runtime_signal:
         runtime_keys["docker"] = add_node("runtime", "Docker")
 
-    runtime_frameworks = {"Docker", "Node.js"}
     for framework in sorted(frameworks):
-        if framework in runtime_frameworks:
+        if framework == "Node.js":
             continue
+
         tool_key = add_node("tool", framework)
-        if frontend_key:
+
+        if framework in frontend_tool_frameworks and frontend_key:
             add_edge(frontend_key, tool_key, "uses")
-        if backend_key:
+        elif framework in backend_tool_frameworks and backend_key:
             add_edge(backend_key, tool_key, "uses")
+        elif framework in shared_tool_frameworks:
+            if frontend_key:
+                add_edge(frontend_key, tool_key, "uses")
+            if backend_key:
+                add_edge(backend_key, tool_key, "uses")
+        else:
+            # Fallback: attach unknown tools to whichever side exists.
+            if backend_key and not frontend_key:
+                add_edge(backend_key, tool_key, "uses")
+            elif frontend_key and not backend_key:
+                add_edge(frontend_key, tool_key, "uses")
+            else:
+                if frontend_key:
+                    add_edge(frontend_key, tool_key, "uses")
+                if backend_key:
+                    add_edge(backend_key, tool_key, "uses")
 
     for path in entry_points:
         ep_key = add_node("entry_point", path, data={"path": path})
@@ -214,13 +263,13 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         elif frontend_key:
             add_edge(frontend_key, ep_key, "contains")
 
-    if frontend_key and "node" in runtime_keys:
+    if frontend_key and "node" in runtime_keys and has_frontend_entry:
         add_edge(frontend_key, runtime_keys["node"], "runs_on")
-    if backend_key and "python" in runtime_keys:
+    if backend_key and "python" in runtime_keys and has_backend_entry:
         add_edge(backend_key, runtime_keys["python"], "runs_on")
-    if backend_key and "dotnet" in runtime_keys:
+    if backend_key and "dotnet" in runtime_keys and has_backend_entry:
         add_edge(backend_key, runtime_keys["dotnet"], "runs_on")
-    if backend_key and "node" in runtime_keys and any(ep.endswith((".js", ".ts")) for ep in entry_points):
+    if backend_key and "node" in runtime_keys and has_backend_node_entry:
         add_edge(backend_key, runtime_keys["node"], "runs_on")
 
     if frontend_key and "docker" in runtime_keys:
