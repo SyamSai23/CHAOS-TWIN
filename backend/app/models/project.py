@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import String, DateTime
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -19,3 +19,10 @@ class Project(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+
+    uploads: Mapped[list["Upload"]] = relationship(back_populates="project")
+    scans: Mapped[list["Scan"]] = relationship(back_populates="project")
+
+
+from app.models.upload import Upload  # noqa: E402, F401 — resolve circular import
+from app.models.scan import Scan  # noqa: E402, F401

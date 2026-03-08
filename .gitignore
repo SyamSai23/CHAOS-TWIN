@@ -16,4 +16,5 @@ dist/
 .vite/
 
 # Local storage (we'll create later)
-storage/
+storage/backend/uploads/
+backend/workspaces/

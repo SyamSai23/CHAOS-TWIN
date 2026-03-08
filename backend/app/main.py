@@ -1,13 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from app.db.session import check_db_connection, engine
 from app.db.base import Base
 from app.models.project import Project  # noqa: F401 — registers the model
-from app.routers import projects
+from app.models.upload import Upload  # noqa: F401 — registers the model
+from app.models.scan import Scan  # noqa: F401 — registers the model
+from app.routers import projects, uploads, scans
 
 app = FastAPI(title="Chaos Twin API")
 
 app.include_router(projects.router)
+app.include_router(uploads.router)
+app.include_router(scans.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +29,24 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
+
+    # Keep scans table aligned when adding simple JSON summary fields.
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE scans ADD COLUMN IF NOT EXISTS key_files JSON NOT NULL DEFAULT '[]'::json")
+        )
+        connection.execute(
+            text("ALTER TABLE scans ADD COLUMN IF NOT EXISTS top_level_dirs JSON NOT NULL DEFAULT '[]'::json")
+        )
+        connection.execute(
+            text("ALTER TABLE scans ADD COLUMN IF NOT EXISTS extension_counts JSON NOT NULL DEFAULT '{}'::json")
+        )
+        connection.execute(
+            text("ALTER TABLE scans ADD COLUMN IF NOT EXISTS project_type VARCHAR NOT NULL DEFAULT 'script/data project'")
+        )
+        connection.execute(
+            text("ALTER TABLE scans ADD COLUMN IF NOT EXISTS entry_points JSON NOT NULL DEFAULT '[]'::json")
+        )
 
 
 @app.get("/health")
