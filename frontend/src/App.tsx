@@ -111,10 +111,19 @@ function shortenLabel(text: string): string {
   return trimmed.length > 24 ? `${trimmed.slice(0, 21)}…` : trimmed;
 }
 
-function toReactFlowGraph(graph: GraphResponse): {
+function toReactFlowGraph(
+  graph: GraphResponse,
+  simulationResult?: SimulationResult | null,
+): {
   nodes: ReactFlowNode[];
   edges: ReactFlowEdge[];
 } {
+  // Build sets for fast lookup when a simulation is active
+  const failedNodeId = simulationResult?.failed_node_id ?? null;
+  const impactedNodeIds = new Set(
+    simulationResult?.impacted_nodes.map((n) => n.id) ?? [],
+  );
+  const hasSimulation = failedNodeId !== null;
   function shortLabel(node: GraphNode): string {
     return shortenLabel(node.label);
   }
@@ -155,6 +164,31 @@ function toReactFlowGraph(graph: GraphResponse): {
   const rfNodes: ReactFlowNode[] = [];
   const componentColIndex = new Map<string, number>(); // nodeId → column
 
+  // Helper: compute simulation-aware style overrides for a node
+  function simStyle(nodeId: string, baseStyle: Record<string, unknown>): Record<string, unknown> {
+    if (!hasSimulation) return baseStyle;
+    if (nodeId === failedNodeId) {
+      return {
+        ...baseStyle,
+        border: "2.5px solid #ef4444",
+        boxShadow: "0 0 14px 4px rgba(239,68,68,0.45)",
+        background: "#2a0a0a",
+        opacity: 1,
+      };
+    }
+    if (impactedNodeIds.has(nodeId)) {
+      return {
+        ...baseStyle,
+        border: "2px solid #f59e0b",
+        boxShadow: "0 0 10px 2px rgba(245,158,11,0.35)",
+        background: "#2a1a00",
+        opacity: 1,
+      };
+    }
+    // Unaffected — dim it out
+    return { ...baseStyle, opacity: 0.25 };
+  }
+
   // Place main component nodes in a horizontal row
   mainNodes.forEach((node, i) => {
     componentColIndex.set(node.id, i);
@@ -163,7 +197,7 @@ function toReactFlowGraph(graph: GraphResponse): {
       id: node.id,
       position: { x: i * COL_W, y: 0 },
       data: { label: shortLabel(node) },
-      style: {
+      style: simStyle(node.id, {
         border: `2px solid ${colors.border}`,
         borderRadius: "10px",
         padding: "8px 10px",
@@ -173,7 +207,7 @@ function toReactFlowGraph(graph: GraphResponse): {
         fontSize: "13px",
         fontWeight: 700,
         textAlign: "center",
-      },
+      }),
     });
   });
 
@@ -191,7 +225,7 @@ function toReactFlowGraph(graph: GraphResponse): {
       id: node.id,
       position: { x: col * COL_W + 10, y: ROW_H + subIdx * (ROW_H - 10) },
       data: { label: shortLabel(node) },
-      style: {
+      style: simStyle(node.id, {
         border: `1.5px dashed ${colors.border}`,
         borderRadius: "6px",
         padding: "5px 8px",
@@ -201,7 +235,7 @@ function toReactFlowGraph(graph: GraphResponse): {
         fontSize: "11px",
         fontWeight: 500,
         textAlign: "center",
-      },
+      }),
     });
   });
 
@@ -216,7 +250,7 @@ function toReactFlowGraph(graph: GraphResponse): {
       id: node.id,
       position: { x: i * COL_W, y: auxY },
       data: { label: shortLabel(node) },
-      style: {
+      style: simStyle(node.id, {
         border: `1.5px solid ${colors.border}`,
         borderRadius: "8px",
         padding: "6px 8px",
@@ -226,7 +260,7 @@ function toReactFlowGraph(graph: GraphResponse): {
         fontSize: "11px",
         fontWeight: 600,
         textAlign: "center",
-      },
+      }),
     });
   });
 
@@ -237,7 +271,7 @@ function toReactFlowGraph(graph: GraphResponse): {
       id: node.id,
       position: { x: (auxNodes.length + i) * COL_W, y: auxY },
       data: { label: shortLabel(node) },
-      style: {
+      style: simStyle(node.id, {
         border: `1px solid ${colors.border}`,
         borderRadius: "8px",
         padding: "6px 8px",
@@ -247,17 +281,34 @@ function toReactFlowGraph(graph: GraphResponse): {
         fontSize: "11px",
         fontWeight: 600,
         textAlign: "center",
-      },
+      }),
     });
   });
 
-  const rfEdges: ReactFlowEdge[] = graph.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source_node_id,
-    target: edge.target_node_id,
-    animated: false,
-    style: { stroke: "#475569", strokeWidth: 1.2 },
-  }));
+  // Build a set of node IDs involved in the simulation (failed + impacted)
+  const simNodeIds = new Set<string>();
+  if (hasSimulation) {
+    simNodeIds.add(failedNodeId!);
+    for (const n of simulationResult!.impacted_nodes) simNodeIds.add(n.id);
+  }
+
+  const rfEdges: ReactFlowEdge[] = graph.edges.map((edge) => {
+    const srcInSim = simNodeIds.has(edge.source_node_id);
+    const tgtInSim = simNodeIds.has(edge.target_node_id);
+    const bothInSim = srcInSim && tgtInSim;
+
+    return {
+      id: edge.id,
+      source: edge.source_node_id,
+      target: edge.target_node_id,
+      animated: bothInSim,
+      style: hasSimulation
+        ? bothInSim
+          ? { stroke: "#f59e0b", strokeWidth: 2 }
+          : { stroke: "#475569", strokeWidth: 1.2, opacity: 0.2 }
+        : { stroke: "#475569", strokeWidth: 1.2 },
+    };
+  });
 
   return { nodes: rfNodes, edges: rfEdges };
 }
@@ -418,6 +469,22 @@ function App() {
     }
   }
 
+  async function handleDeleteProject(projectId: string) {
+    if (!window.confirm("Delete this project and all its data? This cannot be undone.")) return;
+
+    try {
+      const res = await fetch(`${API}/projects/${projectId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        alert(body?.detail || "Failed to delete project");
+        return;
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    } catch {
+      alert("Failed to delete project");
+    }
+  }
+
   async function handleGenerateGraph(projectId: string) {
     setGeneratingGraph((prev) => ({ ...prev, [projectId]: true }));
     setGraphMessages((prev) => ({ ...prev, [projectId]: null }));
@@ -547,7 +614,15 @@ function App() {
           <div key={p.id} className="project-card">
             {/* Card header */}
             <div className="card-header">
-              <h3>{p.name}</h3>
+              <div className="card-header-row">
+                <h3>{p.name}</h3>
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => handleDeleteProject(p.id)}
+                >
+                  Delete
+                </button>
+              </div>
               <div className="card-meta">
                 <span>Path: <code>{p.path}</code></span>
                 <span>Created: {new Date(p.created_at).toLocaleString()}</span>
@@ -726,7 +801,7 @@ function App() {
                 const nodeLabelById = Object.fromEntries(
                   graph.nodes.map((node) => [node.id, node.label]),
                 );
-                const flowGraph = toReactFlowGraph(graph);
+                const flowGraph = toReactFlowGraph(graph, simResults[p.id]);
 
                 return (
                   <div className="graph-debug">
@@ -830,6 +905,14 @@ function App() {
                     >
                       {simulating[p.id] ? "Running…" : "Run Simulation"}
                     </button>
+                    {sim && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setSimResults((prev) => ({ ...prev, [p.id]: null }))}
+                      >
+                        Clear
+                      </button>
+                    )}
                   </div>
 
                   {!sim && !simErrors[p.id] && (

@@ -139,6 +139,15 @@
 .btn-secondary:hover:not(:disabled) {
   background: #334155;
 }
+.btn-danger {
+  background: transparent;
+  color: #f87171;
+  border: 1px solid #7f1d1d;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #7f1d1d;
+  color: #fecaca;
+}
 .btn-sm {
   padding: 6px 12px;
   font-size: 0.75rem;
@@ -156,6 +165,11 @@
 .card-header {
   padding: 18px 22px;
   border-bottom: 1px solid #1e293b;
+}
+.card-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 .card-header h3 {
   font-size: 1.05rem;
