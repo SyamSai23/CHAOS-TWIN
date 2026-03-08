@@ -1,8 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.db.session import check_db_connection
+from app.db.session import check_db_connection, engine
+from app.db.base import Base
+from app.models.project import Project  # noqa: F401 — registers the model
+from app.routers import projects
 
 app = FastAPI(title="Chaos Twin API")
+
+app.include_router(projects.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,6 +19,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")
