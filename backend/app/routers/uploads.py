@@ -4,14 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.config import UPLOAD_DIR
 from app.models.project import Project
 from app.models.upload import Upload
 from app.schemas import UploadResponse
 
 router = APIRouter(prefix="/projects/{project_id}/upload", tags=["uploads"])
-
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
-
 
 @router.post("", response_model=UploadResponse, status_code=201)
 def upload_zip(
@@ -29,7 +27,7 @@ def upload_zip(
         raise HTTPException(status_code=400, detail="Only ZIP files are allowed")
 
     # Build storage directory: uploads/<project_id>/
-    project_upload_dir = os.path.join(os.path.abspath(UPLOAD_DIR), project_id)
+    project_upload_dir = os.path.join(str(UPLOAD_DIR), project_id)
     os.makedirs(project_upload_dir, exist_ok=True)
 
     # Save file to disk

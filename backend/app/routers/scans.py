@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.config import WORKSPACE_DIR
 from app.models.project import Project
 from app.models.upload import Upload
 from app.models.scan import Scan
@@ -21,9 +22,6 @@ from app.services.scanner import (
 )
 
 router = APIRouter(prefix="/projects/{project_id}/scan", tags=["scans"])
-
-WORKSPACE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "workspaces")
-
 
 @router.post("", response_model=ScanResponse, status_code=201)
 def scan_project(project_id: str, db: Session = Depends(get_db)):
@@ -44,7 +42,7 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
 
     # 3. Extract the ZIP into a workspace folder
     workspace_path = os.path.join(
-        os.path.abspath(WORKSPACE_DIR), project_id, upload.id
+        str(WORKSPACE_DIR), project_id, upload.id
     )
     extract_zip(upload.storage_path, workspace_path)
 

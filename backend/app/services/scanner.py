@@ -1,14 +1,30 @@
 import os
 import zipfile
 
-# Path segments and filenames to ignore (ZIP artifacts, OS system files)
-JUNK_SEGMENTS: set[str] = {"__MACOSX", ".DS_Store", "Thumbs.db", "desktop.ini"}
+# Folders/files to ignore from scan inventory and summaries.
+IGNORED_PATH_PARTS: set[str] = {
+    "node_modules",
+    ".git",
+    ".next",
+    "dist",
+    "build",
+    "coverage",
+    "vendor",
+    "target",
+    "bin",
+    "obj",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "__MACOSX",
+    ".DS_Store",
+}
 
 
-def _is_junk_path(path: str) -> bool:
-    """Return True if any component of the path is a known junk/system artifact."""
+def _is_ignored_path(path: str) -> bool:
+    """Return True if a path contains ignored folders/files."""
     parts = path.replace("\\", "/").split("/")
-    return any(part in JUNK_SEGMENTS for part in parts)
+    return any(part in IGNORED_PATH_PARTS for part in parts)
 
 
 # Maps file extensions to language names
@@ -110,12 +126,20 @@ def extract_zip(zip_path: str, dest_dir: str) -> str:
     os.makedirs(dest_dir, exist_ok=True)
 
     with zipfile.ZipFile(zip_path, "r") as zf:
-        for member in zf.namelist():
+        for member in zf.infolist():
+            member_name = member.filename
+            normalized_name = member_name.replace("\\", "/").lstrip("/")
+
+            if _is_ignored_path(normalized_name):
+                continue
+
             # Prevent path traversal attacks
-            member_path = os.path.realpath(os.path.join(dest_dir, member))
+            member_path = os.path.realpath(os.path.join(dest_dir, normalized_name))
             if not member_path.startswith(os.path.realpath(dest_dir)):
-                raise ValueError(f"Unsafe path in ZIP: {member}")
-        zf.extractall(dest_dir)
+                raise ValueError(f"Unsafe path in ZIP: {member_name}")
+
+            # Extract only non-ignored members to keep workspace clean.
+            zf.extract(member, dest_dir)
 
     return dest_dir
 
@@ -125,15 +149,15 @@ def collect_file_inventory(root_dir: str) -> list[dict]:
     inventory: list[dict] = []
 
     for dirpath, dirnames, filenames in os.walk(root_dir):
-        # Prune junk directories so os.walk won't descend into them
-        dirnames[:] = [d for d in dirnames if d not in JUNK_SEGMENTS]
+        # Prune ignored directories so os.walk won't descend into them.
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_PATH_PARTS]
 
         for filename in filenames:
-            if filename in JUNK_SEGMENTS:
+            if filename in IGNORED_PATH_PARTS:
                 continue
             full_path = os.path.join(dirpath, filename)
             rel_path = os.path.relpath(full_path, root_dir)
-            if _is_junk_path(rel_path):
+            if _is_ignored_path(rel_path):
                 continue
             _, ext = os.path.splitext(filename)
             size = os.path.getsize(full_path)
@@ -182,7 +206,7 @@ def collect_top_level_dirs(root_dir: str) -> list[str]:
     """Return root-level directories from the extracted project."""
     dirs: list[str] = []
     for name in os.listdir(root_dir):
-        if name in JUNK_SEGMENTS:
+        if name in IGNORED_PATH_PARTS:
             continue
         full_path = os.path.join(root_dir, name)
         if os.path.isdir(full_path):

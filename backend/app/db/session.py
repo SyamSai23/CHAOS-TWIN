@@ -3,9 +3,9 @@ from collections.abc import Generator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/chaostwin"
+from app.config import DATABASE_URL, SQL_ECHO
 
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, echo=SQL_ECHO)
 
 SessionLocal = sessionmaker(bind=engine)
 

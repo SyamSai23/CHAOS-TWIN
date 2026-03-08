@@ -6,13 +6,16 @@ from app.db.base import Base
 from app.models.project import Project  # noqa: F401 — registers the model
 from app.models.upload import Upload  # noqa: F401 — registers the model
 from app.models.scan import Scan  # noqa: F401 — registers the model
-from app.routers import projects, uploads, scans
+from app.models.graph_node import GraphNode  # noqa: F401 — registers the model
+from app.models.graph_edge import GraphEdge  # noqa: F401 — registers the model
+from app.routers import projects, uploads, scans, graphs
 
 app = FastAPI(title="Chaos Twin API")
 
 app.include_router(projects.router)
 app.include_router(uploads.router)
 app.include_router(scans.router)
+app.include_router(graphs.router)
 
 app.add_middleware(
     CORSMiddleware,

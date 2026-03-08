@@ -44,3 +44,36 @@ class ScanResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class GraphNodeResponse(BaseModel):
+    id: str
+    project_id: str
+    scan_id: str
+    node_type: str
+    label: str
+    data: dict
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GraphEdgeResponse(BaseModel):
+    id: str
+    project_id: str
+    scan_id: str
+    source_node_id: str
+    target_node_id: str
+    edge_type: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProjectGraphResponse(BaseModel):
+    project_id: str
+    scan_id: str
+    node_count: int
+    edge_count: int
+    nodes: list[GraphNodeResponse]
+    edges: list[GraphEdgeResponse]
