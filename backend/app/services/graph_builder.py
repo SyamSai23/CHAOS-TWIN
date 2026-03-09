@@ -83,45 +83,7 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
 
     key_file_names = {os.path.basename(path).lower() for path in key_files}
 
-    frontend_framework_signals = {
-        "Node.js",
-        "TypeScript",
-        "Vite",
-        "Next.js",
-        "Angular",
-    }
-    backend_framework_signals = {
-        "Python (pip)",
-        "Python (modern)",
-        "Python (pipenv)",
-        "Django",
-        "Go modules",
-        "Java (Maven)",
-        "Java (Gradle)",
-        "Rust (Cargo)",
-        ".NET",
-    }
-
-    frontend_key_file_signals = {
-        "package.json",
-        "vite.config.ts",
-        "vite.config.js",
-        "next.config.js",
-        "next.config.mjs",
-        "angular.json",
-        "tsconfig.json",
-    }
-    backend_key_file_signals = {
-        "requirements.txt",
-        "pyproject.toml",
-        "pipfile",
-        "manage.py",
-        "go.mod",
-        "pom.xml",
-        "build.gradle",
-        "cargo.toml",
-    }
-
+    # ── Tool-to-component mapping (used by both paths) ──
     frontend_tool_frameworks = {
         "TypeScript",
         "Vite",
@@ -145,29 +107,7 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         "Make",
     }
 
-    has_frontend_entry = any(_is_frontend_entry_path(ep) for ep in entry_points)
-    has_backend_entry = any(
-        os.path.basename(ep).lower() in {"main.py", "app.py", "server.py", "manage.py", "program.cs"}
-        for ep in entry_points
-    )
-    has_backend_node_entry = any(ep.endswith((".js", ".ts")) for ep in entry_points)
-
-    has_frontend = (
-        scan.project_type in {"frontend web app", "full-stack app"}
-        or has_frontend_entry
-        or any(framework in frontend_framework_signals for framework in frameworks)
-        or any(name in frontend_key_file_signals for name in key_file_names)
-        or any(language in {"TypeScript (JSX)", "JavaScript (JSX)"} for language in languages)
-        or "frontend" in {d.lower() for d in top_dirs}
-    )
-    has_backend = (
-        scan.project_type in {"backend API", ".NET backend", "full-stack app"}
-        or has_backend_entry
-        or any(framework in backend_framework_signals for framework in frameworks)
-        or any(name in backend_key_file_signals for name in key_file_names)
-        or "backend" in {d.lower() for d in top_dirs}
-    )
-
+    # ── Database detection (independent of component path) ──
     database_file_markers = {
         "schema.sql",
         "seed.sql",
@@ -191,7 +131,6 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         for p in file_paths
         if p
     ]
-
     has_database = (
         "SQL" in languages
         or "Django" in frameworks
@@ -203,10 +142,114 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         or any(any(keyword in path for keyword in database_path_keywords) for path in lower_file_paths)
     )
 
-    frontend_key = add_node("frontend", "Frontend") if has_frontend else ""
-    backend_key = add_node("backend", "Backend") if has_backend else ""
+    # ── Component & entry-point nodes ──
+    components = scan.components or []
+    _rich = [c for c in components if isinstance(c, dict) and "root_path" in c]
+
+    frontend_key = ""
+    backend_key = ""
+
+    if _rich:
+        # ── New path: use scanned component roots ──
+        for comp in _rich:
+            ct = comp.get("type", "other")
+            cname = comp.get("name", "component")
+
+            if ct == "frontend":
+                label = cname.replace("_", " ").title() if cname.lower() != "frontend" else "Frontend"
+                key = add_node("frontend", label)
+                if not frontend_key:
+                    frontend_key = key
+            elif ct in ("backend", "service"):
+                label = cname.replace("_", " ").title() if cname.lower() != "backend" else "Backend"
+                key = add_node("backend", label)
+                if not backend_key:
+                    backend_key = key
+            # Skip data/infra/docs/config/other types
+
+        # Entry-point child nodes from component data
+        for comp in _rich:
+            ct = comp.get("type", "other")
+            if ct == "frontend":
+                parent = frontend_key
+            elif ct in ("backend", "service"):
+                parent = backend_key
+            else:
+                parent = ""
+
+            for ep in comp.get("entry_points", []):
+                ep_key = add_node("entry_point", ep, data={"path": ep})
+                if parent:
+                    add_edge(parent, ep_key, "contains")
+
+        all_eps = [ep for c in _rich for ep in c.get("entry_points", [])]
+        has_frontend_entry = any(_is_frontend_entry_path(ep) for ep in all_eps)
+        has_backend_entry = any(
+            os.path.basename(ep).lower() in {"main.py", "app.py", "server.py", "manage.py", "program.cs"}
+            for ep in all_eps
+        )
+        has_backend_node_entry = any(ep.endswith((".js", ".ts")) for ep in all_eps)
+    else:
+        # ── Fallback: heuristic detection (pre-v2 scans) ──
+        frontend_framework_signals = {
+            "Node.js", "TypeScript", "Vite", "Next.js", "Angular",
+        }
+        backend_framework_signals = {
+            "Python (pip)", "Python (modern)", "Python (pipenv)", "Django",
+            "Go modules", "Java (Maven)", "Java (Gradle)", "Rust (Cargo)", ".NET",
+        }
+        frontend_key_file_signals = {
+            "package.json", "vite.config.ts", "vite.config.js",
+            "next.config.js", "next.config.mjs", "angular.json", "tsconfig.json",
+        }
+        backend_key_file_signals = {
+            "requirements.txt", "pyproject.toml", "pipfile", "manage.py",
+            "go.mod", "pom.xml", "build.gradle", "cargo.toml",
+        }
+
+        has_frontend_entry = any(_is_frontend_entry_path(ep) for ep in entry_points)
+        has_backend_entry = any(
+            os.path.basename(ep).lower() in {"main.py", "app.py", "server.py", "manage.py", "program.cs"}
+            for ep in entry_points
+        )
+        has_backend_node_entry = any(ep.endswith((".js", ".ts")) for ep in entry_points)
+
+        has_frontend = (
+            scan.project_type in {"frontend web app", "full-stack app"}
+            or has_frontend_entry
+            or any(fw in frontend_framework_signals for fw in frameworks)
+            or any(name in frontend_key_file_signals for name in key_file_names)
+            or any(lang in {"TypeScript (JSX)", "JavaScript (JSX)"} for lang in languages)
+            or "frontend" in {d.lower() for d in top_dirs}
+        )
+        has_backend = (
+            scan.project_type in {"backend API", ".NET backend", "full-stack app"}
+            or has_backend_entry
+            or any(fw in backend_framework_signals for fw in frameworks)
+            or any(name in backend_key_file_signals for name in key_file_names)
+            or "backend" in {d.lower() for d in top_dirs}
+        )
+
+        if has_frontend:
+            frontend_key = add_node("frontend", "Frontend")
+        if has_backend:
+            backend_key = add_node("backend", "Backend")
+
+        for path in entry_points:
+            ep_key = add_node("entry_point", path, data={"path": path})
+            is_frontend_entry = _is_frontend_entry_path(path)
+            if is_frontend_entry and frontend_key:
+                add_edge(frontend_key, ep_key, "contains")
+            elif backend_key:
+                add_edge(backend_key, ep_key, "contains")
+            elif frontend_key:
+                add_edge(frontend_key, ep_key, "contains")
+
     database_key = add_node("database", "Database") if has_database else ""
 
+    # ── Runtime nodes ──
+    # Only language runtimes that define how the app executes.
+    # Docker is infrastructure, not a language runtime — skip it here.
     runtime_keys: dict[str, str] = {}
     has_python_runtime_signal = "Python" in languages or any(name.startswith("Python") for name in frameworks)
     has_node_runtime_signal = (
@@ -214,7 +257,6 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         or "Node.js" in frameworks
     )
     has_dotnet_runtime_signal = "C#" in languages or any(ep.endswith("Program.cs") for ep in entry_points)
-    has_docker_runtime_signal = "Docker" in frameworks
 
     if has_python_runtime_signal:
         runtime_keys["python"] = add_node("runtime", "Python Runtime")
@@ -222,46 +264,62 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         runtime_keys["node"] = add_node("runtime", "Node.js Runtime")
     if has_dotnet_runtime_signal:
         runtime_keys["dotnet"] = add_node("runtime", ".NET Runtime")
-    if has_docker_runtime_signal:
-        runtime_keys["docker"] = add_node("runtime", "Docker")
+
+    # ── Tool nodes ──
+    # Only architecture-defining frameworks get promoted to graph nodes.
+    # Commodity tooling (bundlers, package managers, config) is stored as
+    # metadata on the component node instead of cluttering the graph.
+    PROMOTED_FRAMEWORKS: set[str] = {
+        "Django",
+        "Next.js",
+        "Angular",
+    }
+    DEMOTED_FRAMEWORKS: set[str] = {
+        "TypeScript",
+        "Vite",
+        "Python (pip)",
+        "Python (modern)",
+        "Python (pipenv)",
+        "Docker",
+        "Docker Compose",
+        "Environment config",
+        "Make",
+        "Node.js",
+    }
+
+    # Collect demoted tools per component for metadata
+    frontend_tools: list[str] = []
+    backend_tools: list[str] = []
 
     for framework in sorted(frameworks):
-        if framework == "Node.js":
+        if framework in DEMOTED_FRAMEWORKS:
+            # Store as metadata instead of creating a node
+            if framework in frontend_tool_frameworks:
+                frontend_tools.append(framework)
+            elif framework in backend_tool_frameworks:
+                backend_tools.append(framework)
+            else:
+                # Shared tools go to both
+                frontend_tools.append(framework)
+                backend_tools.append(framework)
             continue
 
-        tool_key = add_node("tool", framework)
-
-        if framework in frontend_tool_frameworks and frontend_key:
-            add_edge(frontend_key, tool_key, "uses")
-        elif framework in backend_tool_frameworks and backend_key:
-            add_edge(backend_key, tool_key, "uses")
-        elif framework in shared_tool_frameworks:
-            if frontend_key:
+        if framework in PROMOTED_FRAMEWORKS:
+            tool_key = add_node("tool", framework)
+            if framework in frontend_tool_frameworks and frontend_key:
                 add_edge(frontend_key, tool_key, "uses")
-            if backend_key:
+            elif framework in backend_tool_frameworks and backend_key:
                 add_edge(backend_key, tool_key, "uses")
-        else:
-            # Fallback: attach unknown tools to whichever side exists.
-            if backend_key and not frontend_key:
-                add_edge(backend_key, tool_key, "uses")
-            elif frontend_key and not backend_key:
+            elif frontend_key:
                 add_edge(frontend_key, tool_key, "uses")
-            else:
-                if frontend_key:
-                    add_edge(frontend_key, tool_key, "uses")
-                if backend_key:
-                    add_edge(backend_key, tool_key, "uses")
+            elif backend_key:
+                add_edge(backend_key, tool_key, "uses")
 
-    for path in entry_points:
-        ep_key = add_node("entry_point", path, data={"path": path})
-        is_frontend_entry = _is_frontend_entry_path(path)
-
-        if is_frontend_entry and frontend_key:
-            add_edge(frontend_key, ep_key, "contains")
-        elif backend_key:
-            add_edge(backend_key, ep_key, "contains")
-        elif frontend_key:
-            add_edge(frontend_key, ep_key, "contains")
+    # Attach tool metadata to component nodes
+    if frontend_key and frontend_tools:
+        nodes[frontend_key].data["tools"] = frontend_tools
+    if backend_key and backend_tools:
+        nodes[backend_key].data["tools"] = backend_tools
 
     if frontend_key and "node" in runtime_keys and has_frontend_entry:
         add_edge(frontend_key, runtime_keys["node"], "runs_on")
@@ -272,21 +330,8 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
     if backend_key and "node" in runtime_keys and has_backend_node_entry:
         add_edge(backend_key, runtime_keys["node"], "runs_on")
 
-    if frontend_key and "docker" in runtime_keys:
-        add_edge(frontend_key, runtime_keys["docker"], "runs_on")
-    if backend_key and "docker" in runtime_keys:
-        add_edge(backend_key, runtime_keys["docker"], "runs_on")
-
     if has_database and backend_key:
         add_edge(backend_key, database_key, "connects_to")
-
-    # Use key files as tool hints when no framework already surfaced.
-    if "docker-compose.yml" in [os.path.basename(k) for k in key_files] or "docker-compose.yaml" in [os.path.basename(k) for k in key_files]:
-        compose_tool_key = add_node("tool", "Docker Compose")
-        if frontend_key:
-            add_edge(frontend_key, compose_tool_key, "uses")
-        if backend_key:
-            add_edge(backend_key, compose_tool_key, "uses")
 
     edge_specs = [
         EdgeSpec(source_key=s, target_key=t, edge_type=e)

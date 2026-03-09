@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -92,3 +93,19 @@ class SimulationRunResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BriefComponentDetail(BaseModel):
+    name: str
+    type: str
+    description: str
+
+
+class RepoBriefResponse(BaseModel):
+    project_id: str
+    repo_summary: str
+    main_components: list[BriefComponentDetail]
+    architecture_explanation: str
+    reading_order: list[str]
+    risk_notes: list[str]
+    simulation_insight: Optional[str] = None

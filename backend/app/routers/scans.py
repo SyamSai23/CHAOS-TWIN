@@ -15,6 +15,7 @@ from app.services.scanner import (
     collect_key_files,
     collect_top_level_dirs,
     count_extensions,
+    detect_component_roots,
     detect_components,
     detect_frameworks,
     detect_languages,
@@ -60,8 +61,17 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
     key_files = collect_key_files(files)
     top_level_dirs = collect_top_level_dirs(effective_root)
     extension_counts = count_extensions(files)
-    entry_points = collect_entry_points(files)
-    components = detect_components(top_level_dirs, files, key_files, entry_points)
+
+    # 5b. Detect component roots, then score entry points per component
+    component_roots = detect_component_roots(files)
+    entry_points = collect_entry_points(files, component_roots)
+
+    # Use component roots when available, fallback to legacy heuristic
+    if component_roots:
+        components = component_roots
+    else:
+        components = detect_components(top_level_dirs, files, key_files, entry_points)
+
     project_type = infer_project_type(files, languages, frameworks, top_level_dirs, components)
 
     # 6. Save scan result

@@ -110,18 +110,65 @@ KEY_FILE_NAMES: set[str] = {
     ".env",
 }
 
-# Entry points that are meaningful at any depth (true startup files)
-DEEP_ENTRY_POINT_NAMES: set[str] = {
-    "main.py", "app.py", "server.py", "manage.py", "Program.cs",
-    "__main__.py",
+# ── Entry-point scoring ──
+# Maps filename → base score.  Higher = stronger startup signal.
+ENTRY_POINT_SCORES: dict[str, int] = {
+    # Strong backend startup files
+    "main.py": 100,
+    "app.py": 95,
+    "server.py": 90,
+    "manage.py": 85,
+    "__main__.py": 85,
+    "Program.cs": 100,
+    # Node.js / TS server-side entry points
+    "server.js": 90,
+    "server.ts": 90,
+    "app.js": 85,
+    "app.ts": 85,
+    # SPA / frontend entry points (extra bonus applied when inside src/)
+    "main.tsx": 80,
+    "main.jsx": 80,
+    "main.ts": 75,
+    "main.js": 75,
+    "index.tsx": 60,
+    "index.jsx": 60,
+    "index.ts": 40,
+    "index.js": 40,
 }
 
-# JS/TS entry points only meaningful at root level or inside src/
-SHALLOW_ENTRY_POINT_NAMES: set[str] = {
-    "index.js", "index.ts", "index.tsx", "index.jsx",
-    "main.js", "main.ts", "main.tsx", "main.jsx",
-    "server.js", "server.ts", "app.js", "app.ts",
+MAX_ENTRY_POINTS_PER_COMPONENT = 2
+
+# ── Component-root markers ──
+# Files whose presence in a directory indicates a "component root".
+COMPONENT_MARKER_FILES: set[str] = {
+    # Frontend
+    "package.json",
+    "vite.config.ts", "vite.config.js",
+    "next.config.js", "next.config.mjs",
+    "angular.json", "nuxt.config.js", "nuxt.config.ts",
+    # Backend
+    "requirements.txt", "pyproject.toml", "Pipfile",
+    "go.mod", "Cargo.toml", "pom.xml", "build.gradle",
+    "Gemfile", "composer.json", "manage.py",
+    # General
+    "Dockerfile", "Program.cs",
 }
+
+FRONTEND_ROOT_MARKERS: set[str] = {
+    "vite.config.ts", "vite.config.js",
+    "next.config.js", "next.config.mjs",
+    "angular.json", "nuxt.config.js", "nuxt.config.ts",
+}
+
+BACKEND_ROOT_MARKERS: set[str] = {
+    "requirements.txt", "pyproject.toml", "Pipfile",
+    "go.mod", "Cargo.toml", "pom.xml", "build.gradle",
+    "Gemfile", "composer.json", "manage.py", "Program.cs",
+}
+
+_FRONTEND_DIR_NAMES: set[str] = {"frontend", "client", "web", "ui"}
+_BACKEND_DIR_NAMES: set[str] = {"backend", "server", "api"}
+_SERVICE_DIR_NAMES: set[str] = {"scheduler", "worker", "cron", "jobs"}
 
 
 def extract_zip(zip_path: str, dest_dir: str) -> str:
@@ -249,28 +296,168 @@ def count_extensions(files: list[dict]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: item[0]))
 
 
-def collect_entry_points(files: list[dict]) -> list[str]:
-    """Find likely startup entry files across multiple components.
+def _score_entry_point(path: str) -> int:
+    """Score an entry-point candidate.  Higher = stronger startup signal."""
+    filename = os.path.basename(path)
+    base_score = ENTRY_POINT_SCORES.get(filename, 0)
+    if base_score == 0:
+        return 0
 
-    DEEP entry points (main.py, app.py, etc.) are found up to 5 levels deep.
-    SHALLOW entry points (index.js, main.tsx, etc.) are found if:
-      - Their parent directory is 'src' (at any depth), OR
-      - They are within 3 levels of root (covers component roots like backend/server.js)
+    parts = path.replace("\\", "/").split("/")
+    depth = len(parts)
+    parent = parts[-2] if depth >= 2 else ""
+
+    # Bonus: file lives directly inside src/
+    if parent == "src":
+        base_score += 15
+
+    # Penalty: deep nesting beyond 4 levels reduces confidence
+    if depth > 4:
+        base_score -= (depth - 4) * 10
+
+    # Heavy penalty: nested index.* NOT directly inside src/
+    if filename in ("index.js", "index.ts", "index.tsx", "index.jsx") and parent != "src" and depth > 2:
+        base_score -= 40
+
+    return max(base_score, 0)
+
+
+def _classify_component_root(dir_path: str, markers: list[str]) -> str:
+    """Classify a component root by its markers and directory name."""
+    dir_name = (os.path.basename(dir_path) or "").lower()
+    marker_set = {m.lower() for m in markers}
+
+    if marker_set & {m.lower() for m in FRONTEND_ROOT_MARKERS}:
+        return "frontend"
+    if marker_set & {m.lower() for m in BACKEND_ROOT_MARKERS}:
+        return "backend"
+    if dir_name in _FRONTEND_DIR_NAMES:
+        return "frontend"
+    if dir_name in _BACKEND_DIR_NAMES:
+        return "backend"
+    if dir_name in _SERVICE_DIR_NAMES:
+        return "service"
+    # package.json with no strong marker → likely frontend
+    if "package.json" in marker_set:
+        return "frontend"
+    if "dockerfile" in marker_set:
+        return "service"
+    return "other"
+
+
+def detect_component_roots(files: list[dict]) -> list[dict]:
+    """Find directories that contain component-marker files.
+
+    Returns a list of component dicts with keys:
+        root_path, name, type, markers, entry_points (empty list).
+
+    Nested roots are suppressed when an ancestor is already a root.
+    When sub-directory roots exist the bare top-level root (\".\") is
+    dropped because it is typically monorepo tooling.
     """
-    result: set[str] = set()
+    # 1. Group marker files by parent directory
+    dir_markers: dict[str, list[str]] = {}
     for f in files:
-        path = f["path"]
-        filename = os.path.basename(path)
-        parts = path.replace("\\", "/").split("/")
-        depth = len(parts)
-        parent = parts[-2] if depth >= 2 else ""
+        filename = os.path.basename(f["path"])
+        if filename in COMPONENT_MARKER_FILES:
+            parent = os.path.dirname(f["path"]) or "."
+            dir_markers.setdefault(parent, []).append(filename)
 
-        if filename in DEEP_ENTRY_POINT_NAMES:
-            if depth <= 5:
-                result.add(path)
-        elif filename in SHALLOW_ENTRY_POINT_NAMES:
-            if parent == "src" or depth <= 3:
-                result.add(path)
+    # 2. Sort shallowest first
+    sorted_dirs = sorted(dir_markers.keys(), key=lambda d: (d.count("/"), d))
+
+    # 3. Accept roots, suppressing dirs nested under an already-accepted one
+    accepted: list[str] = []
+    for d in sorted_dirs:
+        is_nested = any(
+            d.startswith(existing + "/")
+            for existing in accepted
+            if existing != "."
+        )
+        if not is_nested:
+            accepted.append(d)
+
+    # 4. Drop bare root when deeper component roots exist
+    non_root = [d for d in accepted if d != "."]
+    if non_root and "." in accepted:
+        accepted.remove(".")
+
+    # 5. Build result
+    results: list[dict] = []
+    for d in accepted:
+        markers = dir_markers[d]
+        comp_type = _classify_component_root(d, markers)
+        name = os.path.basename(d) if d != "." else "root"
+        results.append({
+            "root_path": d,
+            "name": name,
+            "type": comp_type,
+            "markers": sorted(markers),
+            "entry_points": [],
+        })
+    return results
+
+
+def collect_entry_points(
+    files: list[dict],
+    component_roots: Optional[list[dict]] = None,
+) -> list[str]:
+    """Score entry-point candidates and keep the top 1\u20132 per component.
+
+    When *component_roots* is provided each component\u2019s ``entry_points``
+    list is populated **in-place** so downstream code can use it.
+    """
+    # Score every candidate
+    scored: list[tuple[str, int]] = []
+    for f in files:
+        score = _score_entry_point(f["path"])
+        if score > 0:
+            scored.append((f["path"], score))
+    scored.sort(key=lambda x: -x[1])
+
+    if not component_roots:
+        # Fallback: no component info, return the top entries
+        return [path for path, _ in scored[: MAX_ENTRY_POINTS_PER_COMPONENT * 2]]
+
+    # Build prefix list sorted longest-first for longest-prefix matching
+    prefix_map: list[tuple[str, dict]] = []
+    for comp in component_roots:
+        root = comp["root_path"]
+        prefix = (root + "/") if root != "." else ""
+        prefix_map.append((prefix, comp))
+    prefix_map.sort(key=lambda x: -len(x[0]))
+
+    # Assign each candidate to the most specific (longest) matching root
+    comp_buckets: dict[str, list[tuple[str, int]]] = {
+        comp["root_path"]: [] for comp in component_roots
+    }
+    orphans: list[tuple[str, int]] = []
+
+    for path, sc in scored:
+        matched = False
+        for prefix, comp in prefix_map:
+            if path.startswith(prefix):
+                comp_buckets[comp["root_path"]].append((path, sc))
+                matched = True
+                break
+        if not matched:
+            orphans.append((path, sc))
+
+    # Keep top 1-2 per component
+    result: list[str] = []
+    for comp in component_roots:
+        bucket = comp_buckets[comp["root_path"]]
+        bucket.sort(key=lambda x: -x[1])
+        for path, sc in bucket[: MAX_ENTRY_POINTS_PER_COMPONENT]:
+            if sc >= 20:  # minimum quality threshold
+                result.append(path)
+                comp["entry_points"].append(path)
+
+    # Include any high-scoring orphans not claimed by a component
+    for path, sc in orphans:
+        if sc >= 60:
+            result.append(path)
+
     return sorted(result)
 
 

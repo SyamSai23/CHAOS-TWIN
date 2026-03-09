@@ -25,3 +25,7 @@ def _resolve_storage_dir(env_name: str, default_dir: str) -> Path:
 
 UPLOAD_DIR = _resolve_storage_dir("UPLOAD_DIR", "uploads")
 WORKSPACE_DIR = _resolve_storage_dir("WORKSPACE_DIR", "workspaces")
+
+# --- LLM / AI Brief settings ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
