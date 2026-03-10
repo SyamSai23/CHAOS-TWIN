@@ -9,20 +9,7 @@ from app.models.project import Project
 from app.models.upload import Upload
 from app.models.scan import Scan
 from app.schemas import ScanResponse
-from app.services.scanner import (
-    collect_file_inventory,
-    collect_entry_points,
-    collect_key_files,
-    collect_top_level_dirs,
-    count_extensions,
-    detect_component_roots,
-    detect_components,
-    detect_frameworks,
-    detect_languages,
-    extract_zip,
-    infer_project_type,
-    unwrap_root_dir,
-)
+from app.services.scanner_v3 import extract_zip, unwrap_root_dir, run_full_scan
 
 router = APIRouter(prefix="/projects/{project_id}/scan", tags=["scans"])
 
@@ -52,43 +39,36 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
     # 3b. Unwrap single wrapper folder (e.g. PROJECT-main/)
     effective_root = unwrap_root_dir(workspace_path)
 
-    # 4. Walk files and collect inventory (relative to effective root)
-    files = collect_file_inventory(effective_root)
+    # 4. Run the full V3 scan
+    result = run_full_scan(effective_root)
 
-    # 5. Detect languages/frameworks and build richer summary fields
-    languages = detect_languages(files)
-    frameworks = detect_frameworks(files)
-    key_files = collect_key_files(files)
-    top_level_dirs = collect_top_level_dirs(effective_root)
-    extension_counts = count_extensions(files)
-
-    # 5b. Detect component roots, then score entry points per component
-    component_roots = detect_component_roots(files)
-    entry_points = collect_entry_points(files, component_roots)
-
-    # Use component roots when available, fallback to legacy heuristic
-    if component_roots:
-        components = component_roots
-    else:
-        components = detect_components(top_level_dirs, files, key_files, entry_points)
-
-    project_type = infer_project_type(files, languages, frameworks, top_level_dirs, components)
+    # 5. Map key_files from list[dict] to list[str] for backward compat
+    key_files_flat = [kf["path"] if isinstance(kf, dict) else kf for kf in result["key_files"]]
 
     # 6. Save scan result
     scan = Scan(
         project_id=project_id,
         upload_id=upload.id,
         status="completed",
-        file_count=len(files),
-        files=files,
-        languages=languages,
-        frameworks=frameworks,
-        key_files=key_files,
-        top_level_dirs=top_level_dirs,
-        extension_counts=extension_counts,
-        project_type=project_type,
-        entry_points=entry_points,
-        components=components,
+        file_count=len(result["files"]),
+        files=result["files"],
+        languages=result["languages"],
+        frameworks=result["frameworks"],
+        key_files=key_files_flat,
+        top_level_dirs=result["top_level_dirs"],
+        extension_counts=result["extension_counts"],
+        project_type=result["project_type"],
+        entry_points=result["entry_points"],
+        components=result["components"],
+        # V3 fields
+        confidence_scores=result["confidence_scores"],
+        dependencies=result["dependencies"],
+        service_graph=result["service_graph"],
+        routes=result["routes"],
+        import_graph=result["import_graph"],
+        execution_flow=result["execution_flow"],
+        env_variables=result["env_variables"],
+        docker_services=result["docker_services"],
     )
     db.add(scan)
     db.commit()

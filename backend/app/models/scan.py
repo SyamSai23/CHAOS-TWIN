@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import String, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -32,6 +33,15 @@ class Scan(Base):
     project_type: Mapped[str] = mapped_column(String, nullable=False)
     entry_points: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     components: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # ── Scanner V3 fields ──
+    confidence_scores: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    dependencies: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    service_graph: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    routes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    import_graph: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    execution_flow: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    env_variables: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    docker_services: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

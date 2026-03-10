@@ -9,7 +9,8 @@ from app.models.scan import Scan  # noqa: F401 — registers the model
 from app.models.graph_node import GraphNode  # noqa: F401 — registers the model
 from app.models.graph_edge import GraphEdge  # noqa: F401 — registers the model
 from app.models.simulation_run import SimulationRun  # noqa: F401 — registers the model
-from app.routers import projects, uploads, scans, graphs, simulations, briefs
+from app.models.sequence_diagram import SequenceDiagram  # noqa: F401 — registers the model
+from app.routers import projects, uploads, scans, graphs, simulations, briefs, deep_dive, sequences, routes
 
 app = FastAPI(title="Chaos Twin API")
 
@@ -19,6 +20,9 @@ app.include_router(scans.router)
 app.include_router(graphs.router)
 app.include_router(simulations.router)
 app.include_router(briefs.router)
+app.include_router(deep_dive.router)
+app.include_router(sequences.router)
+app.include_router(routes.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +56,17 @@ def on_startup():
         )
         connection.execute(
             text("ALTER TABLE scans ADD COLUMN IF NOT EXISTS entry_points JSON NOT NULL DEFAULT '[]'::json")
+        )
+        # Per-route sequence diagram support
+        connection.execute(
+            text("ALTER TABLE sequence_diagrams ADD COLUMN IF NOT EXISTS route_id VARCHAR")
+        )
+        connection.execute(
+            text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_project_route
+                ON sequence_diagrams (project_id, route_id)
+                WHERE route_id IS NOT NULL
+            """)
         )
 
 

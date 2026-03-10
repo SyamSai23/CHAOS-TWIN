@@ -1,16 +1,17 @@
 """Build an AI repo brief grounded in structured scan / graph / simulation data.
 
-The prompt sent to the LLM contains *only* pre-ranked, trimmed facts extracted
-from the project's own scan results, graph topology, and (optionally) the
-latest simulation run.  Raw file lists, full extension maps, and low-signal
-metadata are stripped before the prompt is assembled so the context stays
-compact and high-signal.
+The prompt sent to the LLM contains *only* pre-ranked, trimmed, and
+path-sanitized facts extracted from the project's own scan results, graph
+topology, and (optionally) the latest simulation run.  Internal workspace
+paths, UUID folders, and cross-project leakage are stripped before the prompt
+is assembled.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from openai import OpenAI
@@ -30,6 +31,57 @@ _MAX_ENTRY_POINTS = 5
 _MAX_KEY_FILES = 6
 _MAX_GRAPH_EDGES = 10
 _MAX_SIM_IMPACTED = 5
+
+# --------------------------------------------------------------------------- #
+#  Path sanitization
+# --------------------------------------------------------------------------- #
+
+# Matches internal workspace/upload prefixes:
+#   backend/workspaces/<uuid>/<uuid>/<WrapperDir>/rest/of/path
+#   backend/uploads/<uuid>/file
+#   workspaces/<uuid>/...   uploads/<uuid>/...
+# The regex eats everything up to and including the first "real" repo segment
+# after the UUID + optional wrapper-dir layer.
+_UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+_INTERNAL_PATH_RE = re.compile(
+    r"^(?:backend/)?"               # optional leading "backend/"
+    r"(?:workspaces|uploads)/"      # internal storage dir
+    r"(?:" + _UUID_RE + r"/)+"      # one or more UUID folders
+    r"(?:[^/]+-(?:main|master)/)?"  # optional GitHub-style wrapper (e.g. Repo-main/)
+)
+
+
+def _sanitize_path(path: str) -> Optional[str]:
+    """Strip internal workspace/upload prefixes and return a clean repo-relative path.
+
+    Returns ``None`` if the path is entirely internal noise or empty after
+    sanitization.
+    """
+    # Check if the original path is an upload/workspace path before stripping
+    is_internal = bool(_INTERNAL_PATH_RE.search(path))
+    cleaned = _INTERNAL_PATH_RE.sub("", path)
+    # Drop any path that is now empty or still contains a UUID folder segment
+    if not cleaned or re.search(_UUID_RE, cleaned):
+        return None
+    # If the path was internal and what remains has no directory depth,
+    # it's likely just a bare filename from uploads — drop it.
+    if is_internal and "/" not in cleaned:
+        return None
+    # Normalise slashes
+    cleaned = cleaned.replace("\\", "/").strip("/")
+    return cleaned or None
+
+
+def _sanitize_paths(paths: list[str]) -> list[str]:
+    """Sanitize a list of paths, dropping any that resolve to noise."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in paths:
+        clean = _sanitize_path(p)
+        if clean and clean not in seen:
+            seen.add(clean)
+            out.append(clean)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -72,6 +124,7 @@ def build_brief_context(
 ) -> dict[str, Any]:
     """Distil scan / graph / simulation into a compact, ranked context dict.
 
+    All file paths are sanitized to strip internal workspace/upload prefixes.
     Every list is trimmed to a fixed maximum so downstream token usage stays
     predictable regardless of repo size.
     """
@@ -93,11 +146,15 @@ def build_brief_context(
         for c in raw_components[:_MAX_COMPONENTS]
     ]
 
-    # --- Entry points: keep top N ---
-    entry_points = scan.get("entry_points", [])[:_MAX_ENTRY_POINTS]
+    # --- Entry points: sanitize paths, keep top N ---
+    entry_points = _sanitize_paths(
+        scan.get("entry_points", [])
+    )[:_MAX_ENTRY_POINTS]
 
-    # --- Key files: keep top N ---
-    key_files = scan.get("key_files", [])[:_MAX_KEY_FILES]
+    # --- Key files: sanitize paths, keep top N ---
+    key_files = _sanitize_paths(
+        scan.get("key_files", [])
+    )[:_MAX_KEY_FILES]
 
     # --- Graph summary: compact node list + ranked/trimmed edges ---
     label_map = {n["id"]: n["label"] for n in nodes}
@@ -161,28 +218,34 @@ def build_brief_context(
 
 SYSTEM_PROMPT = """\
 You are a software-architecture analyst.  You will receive a compact JSON
-context about a codebase.  Write a concise, grounded repo brief.
+context about ONE codebase.  Write a concise, grounded repo brief.
 
-RULES
-1. Base EVERY claim on the context provided — do not invent files, components,
-   frameworks, or risks that are absent from the data.
-2. Keep each field to 2-4 sentences.
-3. For reading_order, list 3-6 concrete file paths drawn from key_entry_points
-   and top_key_files in the context.
-4. For risk_notes, cite only risks visible in the graph edges or simulation
-   (e.g. single points of failure, missing redundancy, tight coupling).
-5. If latest_simulation is null, set simulation_insight to null.
-6. Do NOT pad the response with generic advice.
+STRICT RULES
+1. Base EVERY claim on the context JSON provided.
+2. Do NOT invent files, components, frameworks, tools, risks, or relationships
+   that are absent from the context.  If a technology appears only under
+   "top_frameworks_tools" it is a detected dependency — describe it as such,
+   not as the primary application stack unless the component types confirm it.
+3. Keep each text field to 2-4 sentences.
+4. For reading_order, list 3-6 file paths taken ONLY from key_entry_points
+   and top_key_files.  Do not fabricate paths.
+5. For risk_notes, cite ONLY risks directly evidenced by graph_summary edges
+   or latest_simulation (e.g. single points of failure, tight coupling).
+   Do not add generic security or operational advice.
+6. If latest_simulation is null, set simulation_insight to null.
+7. Do NOT reference internal paths, UUIDs, workspace directories, or upload
+   storage paths — use only clean repo-relative paths.
+8. Do NOT pad the response with filler, disclaimers, or generic advice.
 
 Respond with ONLY a JSON object in this exact schema:
 {
-  "repo_summary": "<one-paragraph overview of the project>",
+  "repo_summary": "<one-paragraph overview>",
   "main_components": [
     {"name": "<name>", "type": "<type>", "description": "<1-2 sentences>"}
   ],
-  "architecture_explanation": "<how components connect — reference graph edges>",
+  "architecture_explanation": "<how components connect — cite graph edges>",
   "reading_order": ["<path1>", "<path2>"],
-  "risk_notes": ["<concrete risk 1>", "<concrete risk 2>"],
+  "risk_notes": ["<evidence-based risk>"],
   "simulation_insight": "<what the simulation revealed, or null>"
 }
 """

@@ -43,6 +43,15 @@ class ScanResponse(BaseModel):
     project_type: str
     entry_points: list[str]
     components: list[dict] = []
+    # ── Scanner V3 fields ──
+    confidence_scores: Optional[dict] = None
+    dependencies: Optional[dict] = None
+    service_graph: Optional[list] = None
+    routes: Optional[list] = None
+    import_graph: Optional[dict] = None
+    execution_flow: Optional[list] = None
+    env_variables: Optional[list] = None
+    docker_services: Optional[list] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -109,3 +118,55 @@ class RepoBriefResponse(BaseModel):
     reading_order: list[str]
     risk_notes: list[str]
     simulation_insight: Optional[str] = None
+
+
+# ── Component Deep Dive schemas ──────────────────────────────────────
+
+class DeepDiveRequest(BaseModel):
+    component_root: str  # e.g. "backend", "frontend", "." for root
+
+
+class InternalModule(BaseModel):
+    name: str
+    file_count: int
+    dominant_role: str
+    roles: list[str]
+    files: list[str]
+
+
+class ImportantFile(BaseModel):
+    path: str
+    role: str
+    score: int
+
+
+class InternalEdge(BaseModel):
+    source: str
+    target: str
+    type: str
+    weight: int = 1
+
+
+class ModuleEdge(BaseModel):
+    source_module: str
+    target_module: str
+    edge_count: int
+
+
+class FlowStep(BaseModel):
+    step: str
+    example_files: list[str]
+
+
+class DeepDiveResponse(BaseModel):
+    project_id: str
+    component_name: str
+    component_type: str
+    component_summary: str
+    internal_modules: list[InternalModule]
+    important_files: list[ImportantFile]
+    internal_edges: list[InternalEdge]
+    module_edges: list[ModuleEdge]
+    probable_start_file: Optional[str] = None
+    probable_flow_steps: list[FlowStep]
+    notes: list[str]

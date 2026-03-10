@@ -3,8 +3,8 @@
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  color: #e2e8f0;
-  background-color: #0a0e1a;
+  color: #ffffff;
+  background-color: #0a0a0a;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -13,21 +13,24 @@
 
 * {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 a {
   font-weight: 500;
-  color: #818cf8;
+  color: #3b82f6;
   text-decoration: none;
 }
 a:hover {
-  color: #a5b4fc;
+  color: #60a5fa;
 }
 
 h1, h2, h3, h4 {
@@ -37,9 +40,9 @@ h1, h2, h3, h4 {
 
 code {
   font-family: "JetBrains Mono", "Fira Code", "SF Mono", Consolas, monospace;
-  font-size: 0.85em;
-  background: rgba(99, 102, 241, 0.1);
+  font-size: 0.82em;
+  background: rgba(255, 255, 255, 0.05);
   padding: 1px 5px;
   border-radius: 4px;
-  color: #c4b5fd;
+  color: #a0a0a0;
 }
