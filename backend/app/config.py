@@ -13,6 +13,9 @@ DATABASE_URL = os.getenv(
 )
 
 SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in {"1", "true", "yes"}
+ENABLE_LEGACY_STARTUP_SCHEMA_PATCHES = os.getenv(
+    "ENABLE_LEGACY_STARTUP_SCHEMA_PATCHES", "true"
+).lower() in {"1", "true", "yes"}
 
 
 def _resolve_storage_dir(env_name: str, default_dir: str) -> Path:

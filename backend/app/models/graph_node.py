@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String
+from sqlalchemy import DateTime, Float, ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -19,6 +20,10 @@ class GraphNode(Base):
     scan_id: Mapped[str] = mapped_column(
         String, ForeignKey("scans.id"), nullable=False, index=True
     )
+    canonical_entity_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    canonical_entity_kind: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    confidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence_label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     node_type: Mapped[str] = mapped_column(String, nullable=False)
     label: Mapped[str] = mapped_column(String, nullable=False)
     data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

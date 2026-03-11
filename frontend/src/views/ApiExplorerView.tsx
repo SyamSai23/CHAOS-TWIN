@@ -3,8 +3,7 @@ import { Zap, GitBranch } from "lucide-react";
 import type { RoutesResponse, RouteItem } from "../types";
 import type { SequenceData } from "../SequenceDiagram";
 import RequestJourney from "../components/RequestJourney";
-
-const API = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+import { fetchRoutes } from "../api/client";
 
 /* ── Method colors ── */
 
@@ -21,11 +20,12 @@ const METHOD_COLORS: Record<string, string> = {
 
 type Props = {
   projectId: string;
+  refreshKey: number;
 };
 
 /* ── Component ── */
 
-export default function ApiExplorerView({ projectId }: Props) {
+export default function ApiExplorerView({ projectId, refreshKey }: Props) {
   const [data, setData] = useState<RoutesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,15 +45,11 @@ export default function ApiExplorerView({ projectId }: Props) {
     setSeqCache({});
     setLoading(true);
 
-    fetch(`${API}/projects/${encodeURIComponent(projectId)}/routes`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load routes");
-        return res.json();
-      })
+    fetchRoutes(projectId)
       .then((d: RoutesResponse) => setData(d))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [projectId]);
+  }, [projectId, refreshKey]);
 
   /* ── Callback to mark route as having sequence ── */
   const onSequenceGenerated = useCallback(

@@ -6,15 +6,19 @@ uploaded ZIP codebase using deterministic heuristics only (no AI).
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
+import shutil
 import zipfile
 from collections import defaultdict
 from typing import Any, Optional
 from xml.etree import ElementTree
 
 import yaml  # PyYAML — already in requirements.txt
+
+from app.services.identity import make_component_key
 
 # =====================================================================
 # SECTION 1 — Constants
@@ -831,6 +835,7 @@ def detect_components(
             "name": os.path.basename(dir_path) if dir_path != "." else "root",
             "type": comp_type,
             "root_path": dir_path,
+            "component_key": make_component_key(dir_path),
             "entry_file": entry_file,
             "file_count": len(dir_files),
             "languages": comp_langs,
@@ -1144,6 +1149,7 @@ _TEST_PATH_SEGMENTS = {
 }
 _TEST_FILE_SUFFIXES = (".spec.ts", ".spec.js", ".test.ts", ".test.js",
                         ".spec.tsx", ".spec.jsx", ".test.tsx", ".test.jsx")
+_PY_ROUTE_DECORATORS = {"get", "post", "put", "delete", "patch", "head", "options"}
 
 
 def _is_test_file(path: str) -> bool:
@@ -1152,6 +1158,68 @@ def _is_test_file(path: str) -> bool:
         return True
     parts = path.replace("\\", "/").split("/")
     return bool(set(parts) & _TEST_PATH_SEGMENTS)
+
+
+def _extract_python_routes(content: str) -> list[tuple[str, str]]:
+    """Extract real Python route decorators from AST instead of raw text regexes.
+
+    This avoids matching examples inside docstrings or comments.
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+
+    routes: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call):
+                continue
+            if not isinstance(dec.func, ast.Attribute):
+                continue
+            method = dec.func.attr.lower()
+            if method not in _PY_ROUTE_DECORATORS or not dec.args:
+                continue
+            first_arg = dec.args[0]
+            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                routes.append((method.upper(), first_arg.value))
+    return routes
+
+
+def _has_django_url_import(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module != "django.urls":
+            continue
+        for alias in node.names:
+            if alias.name in {"path", "re_path"}:
+                return True
+    return False
+
+
+def _extract_django_routes(content: str) -> list[str]:
+    """Extract Django url() declarations only when the file imports django.urls helpers."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+
+    if not _has_django_url_import(tree):
+        return []
+
+    routes: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id not in {"path", "re_path"}:
+            continue
+        if not node.args:
+            continue
+        first_arg = node.args[0]
+        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+            routes.append(first_arg.value)
+    return routes
 
 
 def _detect_routes(
@@ -1179,18 +1247,18 @@ def _detect_routes(
             content = _safe_read(os.path.join(root, f["path"]))
             if not content:
                 continue
-            for m in _PY_ROUTE_RE.finditer(content):
+            for method, route_path in _extract_python_routes(content):
                 routes.append({
-                    "method": m.group(1).upper(),
-                    "path": m.group(2),
+                    "method": method,
+                    "path": route_path,
                     "file": f["path"],
                     "component": _comp_name_for(f["path"]),
                 })
             # Django url patterns
-            for m in _PY_DJANGO_URL.finditer(content):
+            for route_path in _extract_django_routes(content):
                 routes.append({
                     "method": "ANY",
-                    "path": m.group(1),
+                    "path": route_path,
                     "file": f["path"],
                     "component": _comp_name_for(f["path"]),
                 })
@@ -1504,6 +1572,8 @@ def _infer_project_type(
 
 def extract_zip(zip_path: str, dest_dir: str) -> str:
     """Extract a ZIP file safely into dest_dir."""
+    if os.path.isdir(dest_dir):
+        shutil.rmtree(dest_dir)
     os.makedirs(dest_dir, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as zf:
         for member in zf.infolist():

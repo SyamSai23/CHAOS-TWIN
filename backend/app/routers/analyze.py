@@ -13,10 +13,12 @@ from app.config import WORKSPACE_DIR
 from app.db.session import get_db
 from app.models.project import Project
 from app.models.scan import Scan
+from app.models.sequence_diagram import SequenceDiagram
 from app.models.upload import Upload
 from app.models.route_analysis import RouteAnalysis
 from app.services.ast_analyzer import RouteAnalyzer
 from app.services.phrase_generator import PhraseGenerator
+from app.services.route_analysis_utils import ensure_route_analysis_signature
 from app.services.scanner_v3 import unwrap_root_dir
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,8 @@ def _upsert_analysis(
     analysis: dict,
 ) -> RouteAnalysis:
     """Insert or update a route analysis row."""
+    ensure_route_analysis_signature(analysis)
+
     existing = (
         db.query(RouteAnalysis)
         .filter(
@@ -90,6 +94,10 @@ def _upsert_analysis(
         existing.file = analysis["file"]
         existing.component = analysis["component"]
         existing.analysis_data = analysis
+        db.query(SequenceDiagram).filter(
+            SequenceDiagram.project_id == project_id,
+            SequenceDiagram.route_id == analysis["route_id"],
+        ).delete()
         db.flush()
         return existing
 
@@ -104,6 +112,10 @@ def _upsert_analysis(
         analysis_data=analysis,
     )
     db.add(row)
+    db.query(SequenceDiagram).filter(
+        SequenceDiagram.project_id == project_id,
+        SequenceDiagram.route_id == analysis["route_id"],
+    ).delete()
     db.flush()
     return row
 
@@ -115,7 +127,7 @@ def _enrich_with_phrases(analysis: dict, phrase_gen: PhraseGenerator) -> dict:
         pid = phase["phase_id"]
         if pid in phrases and phrases[pid]:
             phase["description"] = phrases[pid]
-    return analysis
+    return ensure_route_analysis_signature(analysis)
 
 
 # ── Endpoints ───────────────────────────────────────────────────────
@@ -242,4 +254,4 @@ def get_single_analysis(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Route analysis not found")
-    return row.analysis_data
+    return ensure_route_analysis_signature(row.analysis_data)

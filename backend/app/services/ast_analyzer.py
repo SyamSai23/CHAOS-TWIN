@@ -9,13 +9,13 @@ zero pip dependencies.
 from __future__ import annotations
 
 import ast
-import hashlib
 import logging
 import os
 import re
-import uuid
 from pathlib import Path
 from typing import Any, Optional
+
+from app.services.identity import make_route_id
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,6 @@ _SKIP_PARAMS = {"db", "session", "request", "response", "background_tasks"}
 
 # Decorator patterns: @router.get, @app.post, etc.
 _ROUTE_DECORATORS = {"get", "post", "put", "delete", "patch", "head", "options"}
-
-
-def _route_id(method: str, path: str) -> str:
-    raw = f"{method.upper()}:{path}"
-    return hashlib.md5(raw.encode()).hexdigest()
 
 
 def _ast_to_str(node: ast.AST, max_len: int = 80) -> str:
@@ -114,7 +109,7 @@ class RouteAnalyzer:
         path = route.get("path", "/")
         file_rel = route.get("file", "")
         component = route.get("component", "unknown")
-        rid = _route_id(method, path)
+        rid = make_route_id(method, path, file_rel)
 
         # Dispatch non-Python files to tree-sitter analyzer
         ext = Path(file_rel).suffix.lower()
@@ -845,17 +840,3 @@ class RouteAnalyzer:
             "has_external": False,
             "complexity": "simple",
         }
-
-
-# ── Token-efficient compact summary ────────────────────────────────
-
-def compact_summary(analysis: dict) -> dict:
-    """Return a ~60-token summary of a RouteAnalysis for AI context."""
-    return {
-        "route": f"{analysis['method']} {analysis['path']}",
-        "phases": [p["phase_id"] for p in analysis.get("phases", [])],
-        "has_db": analysis.get("has_database", False),
-        "has_external": analysis.get("has_external", False),
-        "error_count": len(analysis.get("error_paths", [])),
-        "complexity": analysis.get("complexity", "simple"),
-    }

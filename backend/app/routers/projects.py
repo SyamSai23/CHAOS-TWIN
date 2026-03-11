@@ -10,6 +10,7 @@ from app.models.upload import Upload
 from app.models.scan import Scan
 from app.models.graph_node import GraphNode
 from app.models.graph_edge import GraphEdge
+from app.models.route_analysis import RouteAnalysis
 from app.models.simulation_run import SimulationRun
 from app.models.sequence_diagram import SequenceDiagram
 from app.schemas import ProjectCreate, ProjectResponse
@@ -40,32 +41,27 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     # Delete related DB rows (order matters due to FK constraints)
     # 1. sequence_diagrams (FK → projects, scans)
     db.query(SequenceDiagram).filter(SequenceDiagram.project_id == project_id).delete()
-    # 2. simulation_runs (FK → projects, scans, graph_nodes)
+    # 2. route_analyses (FK → projects, scans)
+    db.query(RouteAnalysis).filter(RouteAnalysis.project_id == project_id).delete()
+    # 3. simulation_runs (FK → projects, scans, graph_nodes)
     db.query(SimulationRun).filter(SimulationRun.project_id == project_id).delete()
-    # 3. graph_edges (FK → graph_nodes)
+    # 4. graph_edges (FK → graph_nodes)
     db.query(GraphEdge).filter(GraphEdge.project_id == project_id).delete()
-    # 4. graph_nodes (FK → scans)
+    # 5. graph_nodes (FK → scans)
     db.query(GraphNode).filter(GraphNode.project_id == project_id).delete()
-    # 5. scans (FK → uploads)
+    # 6. scans (FK → uploads)
     db.query(Scan).filter(Scan.project_id == project_id).delete()
 
-    # 6. uploads (collect storage paths first, then delete rows)
-    uploads = db.query(Upload).filter(Upload.project_id == project_id).all()
-    upload_paths = [u.storage_path for u in uploads]
+    # 7. uploads
     db.query(Upload).filter(Upload.project_id == project_id).delete()
 
-    # 7. Delete the project itself
+    # 8. Delete the project itself
     db.delete(project)
     db.commit()
 
-    # Clean up files on disk (best-effort, don't fail if missing)
-    for path in upload_paths:
-        try:
-            full = UPLOAD_DIR / path
-            if full.is_file():
-                full.unlink()
-        except OSError:
-            pass
+    upload_dir = UPLOAD_DIR / project_id
+    if upload_dir.is_dir():
+        shutil.rmtree(upload_dir, ignore_errors=True)
 
     # Remove workspace folder for this project
     workspace = WORKSPACE_DIR / project_id

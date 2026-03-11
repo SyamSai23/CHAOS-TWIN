@@ -35,6 +35,7 @@ export type SequenceData = {
   messages: Message[];
   flows: Flow[];
   metadata: {
+    analysis_signature?: string | null;
     component_count: number;
     step_count: number;
     has_external_calls: boolean;

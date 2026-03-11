@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -11,7 +11,13 @@ from app.db.base import Base
 class SequenceDiagram(Base):
     __tablename__ = "sequence_diagrams"
     __table_args__ = (
-        UniqueConstraint("project_id", "route_id", name="uq_project_route"),
+        Index(
+            "uq_project_route",
+            "project_id",
+            "route_id",
+            unique=True,
+            postgresql_where=text("route_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(

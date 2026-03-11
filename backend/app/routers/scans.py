@@ -1,4 +1,6 @@
 import os
+import shutil
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -8,10 +10,17 @@ from app.config import WORKSPACE_DIR
 from app.models.project import Project
 from app.models.upload import Upload
 from app.models.scan import Scan
+from app.models.graph_edge import GraphEdge
+from app.models.graph_node import GraphNode
+from app.models.route_analysis import RouteAnalysis
+from app.models.sequence_diagram import SequenceDiagram
+from app.models.simulation_run import SimulationRun
 from app.schemas import ScanResponse
+from app.services.project_model_storage import produce_project_model_snapshot
 from app.services.scanner_v3 import extract_zip, unwrap_root_dir, run_full_scan
 
 router = APIRouter(prefix="/projects/{project_id}/scan", tags=["scans"])
+logger = logging.getLogger(__name__)
 
 @router.post("", response_model=ScanResponse, status_code=201)
 def scan_project(project_id: str, db: Session = Depends(get_db)):
@@ -31,9 +40,10 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No uploads found for this project")
 
     # 3. Extract the ZIP into a workspace folder
-    workspace_path = os.path.join(
-        str(WORKSPACE_DIR), project_id, upload.id
-    )
+    project_workspace_dir = os.path.join(str(WORKSPACE_DIR), project_id)
+    workspace_path = os.path.join(project_workspace_dir, upload.id)
+    if os.path.isdir(project_workspace_dir):
+        shutil.rmtree(project_workspace_dir)
     extract_zip(upload.storage_path, workspace_path)
 
     # 3b. Unwrap single wrapper folder (e.g. PROJECT-main/)
@@ -71,6 +81,24 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
         docker_services=result["docker_services"],
     )
     db.add(scan)
+
+    # Any graph-, simulation-, sequence-, or route-analysis data from an older
+    # scan is stale once a new scan is accepted.
+    db.query(SequenceDiagram).filter(SequenceDiagram.project_id == project_id).delete()
+    db.query(SimulationRun).filter(SimulationRun.project_id == project_id).delete()
+    db.query(GraphEdge).filter(GraphEdge.project_id == project_id).delete()
+    db.query(GraphNode).filter(GraphNode.project_id == project_id).delete()
+    db.query(RouteAnalysis).filter(RouteAnalysis.project_id == project_id).delete()
+
     db.commit()
     db.refresh(scan)
+
+    try:
+        produce_project_model_snapshot(scan.id)
+    except Exception:
+        logger.exception(
+            "Unexpected error while triggering canonical ProjectModel production for scan %s",
+            scan.id,
+        )
+
     return scan

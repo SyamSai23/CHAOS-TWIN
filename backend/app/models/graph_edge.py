@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, Float, ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -25,7 +26,13 @@ class GraphEdge(Base):
     target_node_id: Mapped[str] = mapped_column(
         String, ForeignKey("graph_nodes.id"), nullable=False
     )
+    canonical_relation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    canonical_relation_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    confidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence_label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    inference_stage: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     edge_type: Mapped[str] = mapped_column(String, nullable=False)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

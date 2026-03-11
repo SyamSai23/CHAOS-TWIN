@@ -15,6 +15,8 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+from app.services.identity import make_route_id
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -45,7 +47,7 @@ _DB_READ_METHODS = {
     "find", "findOne", "findById", "findAll", "findByPk",
     "findUnique", "findFirst", "findMany", "findOneAndReplace",
     "aggregate", "count", "countDocuments", "distinct",
-    "query", "select", "exec", "populate",
+    "query", "select", "exec", "populate", "execPopulate",
     "getRepository", "createQueryBuilder",
 }
 _DB_WRITE_METHODS = {
@@ -104,9 +106,8 @@ _SKIP_PARAMS = {
 }
 
 
-def _route_id(method: str, path: str) -> str:
-    raw = f"{method.upper()}:{path}"
-    return hashlib.md5(raw.encode()).hexdigest()
+def _route_id(method: str, path: str, file: str = "") -> str:
+    return make_route_id(method, path, file)
 
 
 # ── Tree-sitter node helpers (module-level for reuse) ───────────────
@@ -785,7 +786,14 @@ class TreeSitterAnalyzer:
         response: list[dict] = []
 
         total = len(steps)
-        early = max(1, total // 3)
+
+        # A db_read counts as validation only when it precedes an
+        # error-path check (lookup-then-guard pattern).
+        first_error_idx = next(
+            (i for i, s in enumerate(steps)
+             if s["type"] == "conditional" and s["is_error_path"]),
+            None,
+        )
 
         for i, s in enumerate(steps):
             t = s["type"]
@@ -793,7 +801,11 @@ class TreeSitterAnalyzer:
                 validation.append(s)
             elif t == "conditional":
                 processing.append(s)
-            elif t == "db_read" and i < early:
+            elif (
+                t == "db_read"
+                and first_error_idx is not None
+                and i < first_error_idx
+            ):
                 validation.append(s)
             elif t in ("db_read", "db_write", "db_commit"):
                 database.append(s)
@@ -801,11 +813,6 @@ class TreeSitterAnalyzer:
                 response.append(s)
             else:
                 processing.append(s)
-
-        all_steps = validation + processing + database + response
-        if len(all_steps) <= 2:
-            processing = all_steps
-            validation, database, response = [], [], []
 
         phases: list[dict] = []
         if validation:
@@ -951,7 +958,7 @@ class TreeSitterAnalyzer:
         path = route.get("path", "/")
         file_rel = route.get("file", "")
         component = route.get("component", "unknown")
-        rid = _route_id(method, path)
+        rid = _route_id(method, path, file_rel)
 
         empty = {
             "route_id": rid, "method": method, "path": path,
@@ -981,7 +988,7 @@ class TreeSitterAnalyzer:
             return empty
 
         if result is None:
-            logger.info("No handler for %s %s in %s", method, path, file_rel)
+            logger.debug("No handler for %s %s in %s", method, path, file_rel)
             return empty
 
         handler_name, body_node, body_src = result

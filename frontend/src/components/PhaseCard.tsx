@@ -43,19 +43,19 @@ type Props = {
 export default function PhaseCard({ phase, index, mode }: Props) {
   const [showDetails, setShowDetails] = useState(mode === "technical");
   const pillColor = PHASE_COLORS[phase.name] || "#6b7280";
-  const hasSteps = phase.steps.length > 0 && !phase.steps.every((s) => !s.label && !s.technical);
+  const visibleSteps = phase.steps.filter((step) => step.label || step.technical);
+  const hasSteps = visibleSteps.length > 0;
 
   /* ── Story Mode ── */
   if (mode === "story") {
-    const orphan = !phase.description || phase.description.trim() === "";
     return (
-      <div className={`phase-card phase-card-story${orphan ? " phase-orphan" : ""}`}>
+      <div className="phase-card phase-card-story">
         <div className="phase-card-row">
           <span className="phase-number">{index + 1}</span>
           <span className="phase-pill" style={{ background: pillColor }}>
             {phase.name}
           </span>
-          <span className="phase-description">{phase.description}</span>
+          <span className="phase-description">{phase.description || "No summary available for this phase."}</span>
         </div>
         {hasSteps && !showDetails && (
           <button
@@ -74,14 +74,10 @@ export default function PhaseCard({ phase, index, mode }: Props) {
               Hide details
             </button>
             <div className="phase-card-body phase-card-body-story">
-              {phase.steps.map((step, i) => {
+              {visibleSteps.map((step, i) => {
                 const Icon = STEP_ICONS[step.type] || ArrowRight;
                 const label = step.label || step.type.charAt(0).toUpperCase() + step.type.slice(1).replace(/_/g, " ");
-                const hasRaw = (t: string) =>
-                  t.includes("{") || t.includes("'") || t.includes('"') ||
-                  t.includes(":") || t.startsWith("return ") || t.startsWith("Return {");
-                if (hasRaw(label)) return null;
-                const showTech = step.technical && !hasRaw(step.technical);
+                const showTech = step.technical && step.technical !== label;
                 return (
                   <div key={i} className="phase-step phase-step-story">
                     <Icon size={14} />
@@ -116,7 +112,7 @@ export default function PhaseCard({ phase, index, mode }: Props) {
 
       {showDetails && (
         <div className="phase-card-body">
-          {phase.steps.map((step, i) => {
+          {visibleSteps.map((step, i) => {
             const Icon = STEP_ICONS[step.type] || ArrowRight;
             const label = step.label || step.type.charAt(0).toUpperCase() + step.type.slice(1).replace(/_/g, " ");
             return (

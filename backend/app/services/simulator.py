@@ -1,14 +1,16 @@
-"""Heuristic-based failure simulation on the project architecture graph.
+"""Failure simulation on the project architecture graph.
 
-Given a single failed node, build an edge-type-aware impact graph and BFS
-to find all impacted nodes.  Compute a simple severity and produce a
-plain-English summary.
+Uses a semantic-aware graph interpretation when persisted canonical provenance
+is available and falls back to the original edge-type BFS behavior otherwise.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from typing import Optional
+
+from app.services.simulation_interpreter import SimulationGraphContext, build_simulation_context
 
 
 @dataclass
@@ -19,6 +21,7 @@ class SimulationResult:
     impacted_nodes: list[dict]   # [{id, label, node_type, distance}]
     severity: str                # low / medium / high
     summary: str
+    result_metadata: dict = field(default_factory=dict)
 
 
 # Node types that are considered high-impact origins when they fail.
@@ -32,42 +35,105 @@ def simulate_failure(
     nodes: list[dict],
     edges: list[dict],
 ) -> SimulationResult:
-    """Run edge-type-aware BFS from the failed node to find impacted nodes.
+    context = build_simulation_context(nodes, edges)
+    if context.mode == "semantic":
+        return _simulate_semantic(failed_node_id, context)
+    return _simulate_basic(failed_node_id, nodes, edges, context)
 
-    Propagation direction depends on the edge type so that impact flows
-    realistically (e.g. a runtime failure impacts the apps that run on it,
-    not the other way around).    Parameters
-    ----------
-    failed_node_id : str
-        The id of the node that fails.
-    nodes : list[dict]
-        Each dict has at least {id, node_type, label}.
-    edges : list[dict]
-        Each dict has at least {source_node_id, target_node_id, edge_type}.
 
-    Returns
-    -------
-    SimulationResult with impact analysis.
-    """
+def _simulate_semantic(
+    failed_node_id: str,
+    context: SimulationGraphContext,
+) -> SimulationResult:
+    failed_node = context.nodes.get(failed_node_id)
+    if failed_node is None:
+        raise ValueError(f"Node {failed_node_id} not found in graph")
+
+    min_strength = 0.18
+    strengths: dict[str, float] = {failed_node_id: 1.0}
+    distances: dict[str, int] = {failed_node_id: 0}
+    reasons: dict[str, dict] = {}
+    queue = deque([failed_node_id])
+
+    while queue:
+        current_id = queue.popleft()
+        current_strength = strengths[current_id]
+        current_distance = distances[current_id]
+
+        for transition in context.transitions.get(current_id, []):
+            propagated_strength = current_strength * transition.weight
+            if propagated_strength < min_strength:
+                continue
+
+            previous_strength = strengths.get(transition.to_node_id, 0.0)
+            previous_distance = distances.get(transition.to_node_id, 10**9)
+            if propagated_strength <= previous_strength and current_distance + 1 >= previous_distance:
+                continue
+
+            strengths[transition.to_node_id] = propagated_strength
+            distances[transition.to_node_id] = min(previous_distance, current_distance + 1)
+            reasons[transition.to_node_id] = {
+                "dependency_type": transition.category,
+                "why": transition.reason,
+                "impact_score": round(propagated_strength, 3),
+                "confidence_score": transition.confidence_score,
+                "confidence_label": transition.confidence_label,
+                "canonical_relation_type": transition.canonical_relation_type,
+                "inference_stage": transition.inference_stage,
+                "graph_source": transition.graph_source,
+                "collapsed": transition.collapsed,
+            }
+            queue.append(transition.to_node_id)
+
+    impacted_nodes = []
+    for node_id, node in context.nodes.items():
+        if node_id == failed_node_id or node_id not in strengths:
+            continue
+        impacted_nodes.append(
+            {
+                "id": node.id,
+                "label": node.label,
+                "node_type": node.node_type,
+                "distance": distances[node_id],
+                **reasons[node_id],
+            }
+        )
+
+    impacted_nodes.sort(key=lambda item: (-item["impact_score"], item["distance"], item["label"]))
+    severity = _compute_semantic_severity(failed_node, impacted_nodes, len(context.nodes))
+    summary = _build_semantic_summary(failed_node, impacted_nodes, severity)
+
+    return SimulationResult(
+        failed_node_id=failed_node_id,
+        failed_node_label=failed_node.label,
+        failed_node_type=failed_node.node_type,
+        impacted_nodes=impacted_nodes,
+        severity=severity,
+        summary=summary,
+        result_metadata={
+            "mode": "semantic",
+            "graph_provenance": {
+                "node_count": context.stats.get("node_count", 0),
+                "edge_count": context.stats.get("edge_count", 0),
+                "canonical_node_count": context.stats.get("canonical_node_count", 0),
+                "canonical_edge_count": context.stats.get("canonical_edge_count", 0),
+                "invalid_edge_count": context.stats.get("invalid_edge_count", 0),
+            },
+        },
+    )
+
+
+def _simulate_basic(
+    failed_node_id: str,
+    nodes: list[dict],
+    edges: list[dict],
+    context: SimulationGraphContext,
+) -> SimulationResult:
     node_map: dict[str, dict] = {n["id"]: n for n in nodes}
     failed_node = node_map.get(failed_node_id)
     if failed_node is None:
         raise ValueError(f"Node {failed_node_id} not found in graph")
 
-    # Build a directed "impact graph" — an adjacency list where an entry
-    # `A → [B]` means "if A fails, B is impacted".
-    #
-    # Each edge type has its own propagation rule based on what the edge
-    # means in a real architecture:
-    #
-    #   contains   (parent → child):  parent fails  → children impacted  (forward)
-    #                                  child fails   → parent impacted    (reverse)
-    #   runs_on    (app → runtime):   runtime fails  → app impacted      (reverse)
-    #                                  app fails     → no runtime impact  (—)
-    #   uses       (component → tool): tool fails    → component impacted (reverse)
-    #                                  component fails → no tool impact   (—)
-    #   connects_to (A → B):          either side fails → other impacted (both)
-    #
     impact: dict[str, list[str]] = {}
 
     for edge in edges:
@@ -76,34 +142,24 @@ def simulate_failure(
         etype = edge["edge_type"]
 
         if etype == "contains":
-            # Parent fails → children impacted, child fails → parent impacted
             impact.setdefault(src, []).append(tgt)
             impact.setdefault(tgt, []).append(src)
-
         elif etype == "runs_on":
-            # Runtime (target) fails → app (source) impacted
             impact.setdefault(tgt, []).append(src)
-
         elif etype == "uses":
-            # Tool/dep (target) fails → user (source) impacted
             impact.setdefault(tgt, []).append(src)
-
         elif etype == "connects_to":
-            # Network link — failure on either side impacts the other
             impact.setdefault(src, []).append(tgt)
             impact.setdefault(tgt, []).append(src)
-
         else:
-            # Unknown edge type — default to forward propagation
             impact.setdefault(src, []).append(tgt)
 
-    # BFS along the impact graph to find all affected nodes
     visited: set[str] = {failed_node_id}
-    queue: list[tuple[str, int]] = [(failed_node_id, 0)]  # (node_id, distance)
+    queue = deque([(failed_node_id, 0)])
     impacted: list[dict] = []
 
     while queue:
-        current_id, dist = queue.pop(0)
+        current_id, dist = queue.popleft()
         for neighbor_id in impact.get(current_id, []):
             if neighbor_id in visited:
                 continue
@@ -111,12 +167,17 @@ def simulate_failure(
             neighbor = node_map.get(neighbor_id)
             if neighbor is None:
                 continue
-            impacted.append({
-                "id": neighbor["id"],
-                "label": neighbor["label"],
-                "node_type": neighbor["node_type"],
-                "distance": dist + 1,
-            })
+            impacted.append(
+                {
+                    "id": neighbor["id"],
+                    "label": neighbor["label"],
+                    "node_type": neighbor["node_type"],
+                    "distance": dist + 1,
+                    "dependency_type": "generic_dependency",
+                    "why": "basic graph traversal over current graph edges",
+                    "graph_source": "raw_scan_fallback",
+                }
+            )
             queue.append((neighbor_id, dist + 1))
 
     severity = _compute_severity(failed_node, impacted, len(nodes))
@@ -129,6 +190,16 @@ def simulate_failure(
         impacted_nodes=impacted,
         severity=severity,
         summary=summary,
+        result_metadata={
+            "mode": "basic",
+            "graph_provenance": {
+                "node_count": context.stats.get("node_count", 0),
+                "edge_count": context.stats.get("edge_count", 0),
+                "canonical_node_count": context.stats.get("canonical_node_count", 0),
+                "canonical_edge_count": context.stats.get("canonical_edge_count", 0),
+                "invalid_edge_count": context.stats.get("invalid_edge_count", 0),
+            },
+        },
     )
 
 
@@ -167,6 +238,32 @@ def _compute_severity(
     return "low"
 
 
+def _compute_semantic_severity(
+    failed_node,
+    impacted: list[dict],
+    total_nodes: int,
+) -> str:
+    if total_nodes <= 1 or not impacted:
+        return "low"
+
+    weighted_impact = sum(node.get("impact_score", 0.0) for node in impacted)
+    coverage_score = weighted_impact / max(1, total_nodes - 1)
+    peak_score = max(node.get("impact_score", 0.0) for node in impacted)
+    origin_factor = {
+        "database": 1.0,
+        "runtime": 0.95,
+        "component": 0.85,
+        "external": 0.75,
+    }.get(_node_type_value(failed_node), 0.65)
+
+    severity_score = (coverage_score * 0.5) + (peak_score * 0.35) + (origin_factor * 0.15)
+    if severity_score >= 0.66:
+        return "high"
+    if severity_score >= 0.33:
+        return "medium"
+    return "low"
+
+
 def _build_summary(
     failed_node: dict,
     impacted: list[dict],
@@ -190,3 +287,29 @@ def _build_summary(
         f"If {label} ({ntype}) fails, it causes {severity_word} impact — "
         f"{count} {node_word} affected ({type_str})."
     )
+
+
+def _build_semantic_summary(
+    failed_node,
+    impacted: list[dict],
+    severity: str,
+) -> str:
+    label = failed_node.label
+    ntype = failed_node.node_type
+    count = len(impacted)
+    if count == 0:
+        return f"If {label} ({ntype}) fails, semantic analysis found no direct downstream impact."
+
+    top_categories = sorted({node.get("dependency_type", "generic_dependency") for node in impacted})
+    category_str = ", ".join(top_categories[:3])
+    severity_word = {"low": "minor", "medium": "moderate", "high": "significant"}[severity]
+    return (
+        f"If {label} ({ntype}) fails, semantic dependency analysis predicts {severity_word} impact — "
+        f"{count} components affected through {category_str}."
+    )
+
+
+def _node_type_value(failed_node) -> str:
+    if hasattr(failed_node, "node_type"):
+        return failed_node.node_type
+    return failed_node.get("node_type", "unknown")

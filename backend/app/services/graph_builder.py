@@ -21,6 +21,10 @@ class NodeSpec:
     node_type: str
     label: str
     data: dict
+    canonical_entity_id: Optional[str] = None
+    canonical_entity_kind: Optional[str] = None
+    confidence_score: Optional[float] = None
+    confidence_label: Optional[str] = None
 
 
 @dataclass
@@ -28,6 +32,12 @@ class EdgeSpec:
     source_key: str
     target_key: str
     edge_type: str
+    data: dict = field(default_factory=dict)
+    canonical_relation_id: Optional[str] = None
+    canonical_relation_type: Optional[str] = None
+    confidence_score: Optional[float] = None
+    confidence_label: Optional[str] = None
+    inference_stage: Optional[str] = None
 
 
 # ── Slug helper ──────────────────────────────────────────────────────
@@ -157,10 +167,12 @@ def build_graph_from_scan(scan: Scan) -> tuple[list[NodeSpec], list[EdgeSpec]]:
         primary_lang = comp_langs[0] if comp_langs else None
 
         data = {
+            "component_key": comp.get("component_key"),
             "component_type": ctype,
             "language": primary_lang,
             "file_count": comp.get("file_count"),
             "entry_file": comp.get("entry_file"),
+            "root_path": comp.get("root_path"),
         }
         key = add_node(node_type, label, data)
         comp_keys[cname] = key

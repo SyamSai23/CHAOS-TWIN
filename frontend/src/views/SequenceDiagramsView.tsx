@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { GitCommitHorizontal } from "lucide-react";
 import SequenceDiagram, { type SequenceData } from "../SequenceDiagram";
-
-const API = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+import {
+  fetchRouteSequences,
+  generateAllRouteSequences,
+  type RouteSequenceRecord,
+} from "../api/client";
 
 const METHOD_COLORS: Record<string, string> = {
   GET: "#22c55e",
@@ -12,18 +15,13 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: "#a855f7",
 };
 
-type RouteSeqRecord = {
-  route_id: string;
-  diagram_data: SequenceData;
-  created_at: string | null;
-};
-
 type Props = {
   projectId: string;
+  refreshKey: number;
 };
 
-export default function SequenceDiagramsView({ projectId }: Props) {
-  const [records, setRecords] = useState<RouteSeqRecord[]>([]);
+export default function SequenceDiagramsView({ projectId, refreshKey }: Props) {
+  const [records, setRecords] = useState<RouteSequenceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -35,12 +33,8 @@ export default function SequenceDiagramsView({ projectId }: Props) {
   const fetchRecords = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetch(`${API}/projects/${encodeURIComponent(projectId)}/sequence/routes`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load route diagrams");
-        return res.json();
-      })
-      .then((data: RouteSeqRecord[]) => setRecords(data))
+    fetchRouteSequences(projectId)
+      .then((data) => setRecords(data))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [projectId]);
@@ -49,19 +43,13 @@ export default function SequenceDiagramsView({ projectId }: Props) {
     setRecords([]);
     setExpandedId(null);
     fetchRecords();
-  }, [projectId, fetchRecords]);
+  }, [projectId, refreshKey, fetchRecords]);
 
   const handleGenerateAll = () => {
     setGenAllState({ running: true, progress: "Starting batch generation…" });
 
-    fetch(`${API}/projects/${encodeURIComponent(projectId)}/sequence/all`, {
-      method: "POST",
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Batch generation failed");
-        return res.json();
-      })
-      .then((result: { generated: number; failed: number; route_ids: string[] }) => {
+    generateAllRouteSequences(projectId)
+      .then((result) => {
         setGenAllState({
           running: false,
           progress: `Generated ${result.generated} diagrams${result.failed ? `, ${result.failed} failed` : ""}`,
@@ -135,7 +123,7 @@ export default function SequenceDiagramsView({ projectId }: Props) {
       )}
       <div className="seq-route-grid">
         {records.map((rec) => {
-          const d = rec.diagram_data;
+          const d: SequenceData = rec.diagram_data;
           const method = d.route_method ?? d.flows?.[0]?.route_example?.split(" ")[0] ?? "GET";
           const path = d.route_path ?? d.flows?.[0]?.route_example?.split(" ").slice(1).join(" ") ?? "/";
           const mColor = METHOD_COLORS[method] || "#6b6b6b";

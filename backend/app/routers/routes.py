@@ -1,4 +1,3 @@
-import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +8,7 @@ from app.db.session import get_db
 from app.models.project import Project
 from app.models.scan import Scan
 from app.models.sequence_diagram import SequenceDiagram
+from app.services.identity import make_route_id
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,6 @@ class RoutesResponse(BaseModel):
 
 
 # ── Helpers ──
-
-
-def _route_id(method: str, path: str) -> str:
-    """Deterministic MD5 hash of method+path."""
-    raw = f"{method.upper()}:{path}"
-    return hashlib.md5(raw.encode()).hexdigest()
 
 
 def _component_type_from_scan(component_name: str, components: list[dict]) -> str:
@@ -108,12 +102,13 @@ def get_routes(project_id: str, db: Session = Depends(get_db)):
             comp_name = r.get("component", "") or "unknown"
             method = r.get("method", "ANY").upper()
             path = r.get("path", "")
-            rid = _route_id(method, path)
+            file_path = r.get("file", "")
+            rid = make_route_id(method, path, file_path)
             item = RouteItem(
                 id=rid,
                 method=method,
                 path=path,
-                file=r.get("file", ""),
+                file=file_path,
                 component=comp_name,
                 has_sequence=rid in seq_route_ids,
             )

@@ -51,9 +51,13 @@ class Scan(Base):
     upload: Mapped["Upload"] = relationship()
     graph_nodes: Mapped[list["GraphNode"]] = relationship(back_populates="scan")
     graph_edges: Mapped[list["GraphEdge"]] = relationship(back_populates="scan")
+    project_model_snapshot: Mapped[Optional["ProjectModelSnapshot"]] = relationship(
+        back_populates="scan"
+    )
 
 
 from app.models.project import Project  # noqa: E402, F401
 from app.models.upload import Upload  # noqa: E402, F401
 from app.models.graph_node import GraphNode  # noqa: E402, F401
 from app.models.graph_edge import GraphEdge  # noqa: E402, F401
+from app.models.project_model_snapshot import ProjectModelSnapshot  # noqa: E402, F401

@@ -301,10 +301,7 @@ export default function ArchitectureView({
         graph.nodes.find(
           (n) =>
             ["frontend", "backend", "component"].includes(n.node_type) &&
-            (n.label.toLowerCase() === selComp.name.toLowerCase() ||
-              n.label.toLowerCase() ===
-                selComp.name.replace("_", " ").toLowerCase() ||
-              n.node_type === selComp.type),
+            n.data.component_key === selComp.component_key,
         )?.id ?? null;
     }
   }

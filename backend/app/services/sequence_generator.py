@@ -17,6 +17,8 @@ from app.models.scan import Scan
 from app.models.graph_node import GraphNode
 from app.models.graph_edge import GraphEdge
 from app.models.route_analysis import RouteAnalysis
+from app.services.route_analysis_utils import ensure_route_analysis_signature
+from app.services.identity import make_route_id
 
 
 # ── Phase → human-readable labels ───────────────────────────────────
@@ -461,8 +463,7 @@ _SKIP_SUFFIXES = (".png", ".jpg", ".jpeg", ".svg", ".css", ".html", ".gif", ".ic
 
 
 def _route_id(method: str, path: str) -> str:
-    raw = f"{method.upper()}:{path}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    return make_route_id(method, path)
 
 
 def _short_file(file_path: str) -> str:
@@ -501,7 +502,7 @@ def generate_sequence_for_route(
     path = route.get("path", "/")
     route_file = route.get("file", "")
     component = route.get("component", "unknown")
-    rid = _route_id(method, path)
+    rid = make_route_id(method, path, route_file)
 
     # ── Fetch analysis_data from route_analyses table ───────────────
     analysis: dict = {}
@@ -515,7 +516,7 @@ def generate_sequence_for_route(
             .first()
         )
         if record and record.analysis_data:
-            analysis = record.analysis_data
+            analysis = ensure_route_analysis_signature(record.analysis_data)
 
     phases: list[dict] = analysis.get("phases", [])
     error_paths: list[dict] = analysis.get("error_paths", [])
@@ -523,6 +524,7 @@ def generate_sequence_for_route(
     a_file = analysis.get("file", route_file)
     has_database = analysis.get("has_database", False)
     has_external = analysis.get("has_external", False)
+    analysis_signature = analysis.get("analysis_signature")
 
     # ── Build participants ──────────────────────────────────────────
     participants: list[dict] = []
@@ -700,5 +702,6 @@ def generate_sequence_for_route(
             "has_external_calls": has_ext,
             "has_database": has_db,
             "is_multi_component": comp_count > 1,
+            "analysis_signature": analysis_signature,
         },
     }
