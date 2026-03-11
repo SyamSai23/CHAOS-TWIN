@@ -145,6 +145,54 @@ export type RoutesResponse = {
   methods_summary: Record<string, number>;
 };
 
+/* ── Route Analysis (AST analyzer) ── */
+
+export type AnalysisStep = {
+  step_id: string;
+  type: string;
+  label: string;
+  technical: string;
+  line_number: number | null;
+  is_error_path: boolean;
+};
+
+export type AnalysisPhase = {
+  phase_id: string;
+  name: string;
+  description: string;
+  steps: AnalysisStep[];
+};
+
+export type AnalysisErrorPath = {
+  trigger: string;
+  status_code: number | null;
+  message: string | null;
+};
+
+export type AnalysisParameter = {
+  name: string;
+  type: string;
+  source: string;
+};
+
+export type RouteAnalysis = {
+  route_id: string;
+  method: string;
+  path: string;
+  file: string;
+  component: string;
+  handler_function: string;
+  parameters: AnalysisParameter[];
+  return_type: string | null;
+  phases: AnalysisPhase[];
+  error_paths: AnalysisErrorPath[];
+  participants: string[];
+  has_database: boolean;
+  has_filesystem: boolean;
+  has_external: boolean;
+  complexity: "simple" | "moderate" | "complex";
+};
+
 /* ── Utility ── */
 
 export function shortenLabel(text: string): string {

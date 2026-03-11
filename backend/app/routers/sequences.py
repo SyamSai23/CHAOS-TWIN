@@ -128,7 +128,7 @@ def generate_route_sequence(
         "component": body.component,
     }
 
-    diagram_data = generate_sequence_for_route(latest_scan, graph_nodes, graph_edges, route)
+    diagram_data = generate_sequence_for_route(latest_scan, graph_nodes, graph_edges, route, db=db)
     rid = _route_id(body.method, body.path)
 
     # Upsert: delete old row for this (project, route) then insert
@@ -188,7 +188,7 @@ def generate_all_route_sequences(project_id: str, db: Session = Depends(get_db))
     for route in raw_routes:
         rid = _route_id(route.get("method", "GET"), route.get("path", "/"))
         try:
-            diagram_data = generate_sequence_for_route(latest_scan, graph_nodes, graph_edges, route)
+            diagram_data = generate_sequence_for_route(latest_scan, graph_nodes, graph_edges, route, db=db)
 
             # Upsert
             db.query(SequenceDiagram).filter(
@@ -240,3 +240,69 @@ def list_route_sequences(project_id: str, db: Session = Depends(get_db)):
         }
         for r in records
     ]
+
+
+# ── Temporary: regenerate diagrams for ALL projects ──
+
+admin_router = APIRouter(prefix="/sequence", tags=["sequence-admin"])
+
+
+@admin_router.post("/regenerate-all-projects")
+def regenerate_all_projects(db: Session = Depends(get_db)):
+    """One-time endpoint: regenerate route sequence diagrams for every project."""
+    projects = db.query(Project).all()
+    results = []
+
+    for project in projects:
+        pid = str(project.id)
+        latest_scan = (
+            db.query(Scan)
+            .filter(Scan.project_id == pid)
+            .order_by(Scan.created_at.desc())
+            .first()
+        )
+        if not latest_scan:
+            results.append({"project": project.name, "status": "skipped", "reason": "no scan"})
+            continue
+
+        raw_routes: list[dict] = latest_scan.routes or []
+        if not raw_routes:
+            results.append({"project": project.name, "status": "skipped", "reason": "no routes"})
+            continue
+
+        graph_nodes = db.query(GraphNode).filter(GraphNode.project_id == pid).all()
+        graph_edges = db.query(GraphEdge).filter(GraphEdge.project_id == pid).all()
+
+        generated = 0
+        failed = 0
+        for route in raw_routes:
+            rid = _route_id(route.get("method", "GET"), route.get("path", "/"))
+            try:
+                diagram_data = generate_sequence_for_route(
+                    latest_scan, graph_nodes, graph_edges, route, db=db,
+                )
+                db.query(SequenceDiagram).filter(
+                    SequenceDiagram.project_id == pid,
+                    SequenceDiagram.route_id == rid,
+                ).delete()
+                db.flush()
+                db.add(SequenceDiagram(
+                    project_id=pid,
+                    scan_id=latest_scan.id,
+                    route_id=rid,
+                    diagram_data=diagram_data,
+                ))
+                generated += 1
+            except Exception:
+                logger.exception("Failed seq for %s %s %s",
+                                 project.name, route.get("method"), route.get("path"))
+                failed += 1
+
+        db.commit()
+        results.append({
+            "project": project.name,
+            "generated": generated,
+            "failed": failed,
+        })
+
+    return {"projects": results}

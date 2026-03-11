@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Zap, GitBranch } from "lucide-react";
 import type { RoutesResponse, RouteItem } from "../types";
-import SequenceDiagram, { type SequenceData } from "../SequenceDiagram";
+import type { SequenceData } from "../SequenceDiagram";
+import RequestJourney from "../components/RequestJourney";
 
 const API = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -15,33 +16,6 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: "#a855f7",
   ANY: "#6b6b6b",
 };
-
-/* ── Rule-based route description ── */
-
-function describeRoute(method: string, path: string): string | null {
-  const segments = path
-    .split("/")
-    .filter(Boolean)
-    .filter((s) => !s.startsWith("{") && !s.startsWith(":") && !s.startsWith("<"));
-
-  if (segments.length === 0) return null;
-
-  const lastSeg = segments[segments.length - 1];
-  const noun = lastSeg.replace(/[-_]/g, " ");
-
-  const endsWithParam =
-    path.endsWith("}") || /\/:[^/]+$/.test(path) || /<[^>]+>\/?$/.test(path);
-
-  const m = method.toUpperCase();
-
-  if (m === "GET" && endsWithParam) return `Fetches a single ${noun} by ID`;
-  if (m === "GET") return `Fetches list of ${noun}`;
-  if (m === "POST") return `Creates a new ${noun}`;
-  if (m === "PUT" || m === "PATCH") return `Updates a ${noun}`;
-  if (m === "DELETE") return `Deletes a ${noun}`;
-
-  return null;
-}
 
 /* ── Props ── */
 
@@ -241,7 +215,7 @@ export default function ApiExplorerView({ projectId }: Props) {
         {/* ── RIGHT PANEL ── */}
         <div className="api-right-panel">
           {selectedRoute ? (
-            <RouteDetail
+            <RequestJourney
               route={selectedRoute}
               projectId={projectId}
               seqData={seqCache[selectedRoute.id] ?? null}
@@ -290,169 +264,4 @@ function RouteRow({
   );
 }
 
-/* ── Route detail sub-component ── */
-
-function RouteDetail({
-  route,
-  projectId,
-  seqData,
-  onSequenceGenerated,
-}: {
-  route: RouteItem;
-  projectId: string;
-  seqData: SequenceData | null;
-  onSequenceGenerated: (routeId: string, data: SequenceData) => void;
-}) {
-  const color = METHOD_COLORS[route.method] || "#6b6b6b";
-  const description = describeRoute(route.method, route.path);
-  const [generating, setGenerating] = useState(false);
-  const [seqError, setSeqError] = useState<string | null>(null);
-  const [localSeq, setLocalSeq] = useState<SequenceData | null>(null);
-  const [checked, setChecked] = useState(false);
-
-  // On mount / route change: try to fetch existing diagram
-  useEffect(() => {
-    setLocalSeq(null);
-    setSeqError(null);
-    setChecked(false);
-
-    if (seqData) {
-      setLocalSeq(seqData);
-      setChecked(true);
-      return;
-    }
-
-    if (!route.has_sequence) {
-      setChecked(true);
-      return;
-    }
-
-    // Route claims to have a diagram — fetch it
-    fetch(
-      `${API}/projects/${encodeURIComponent(projectId)}/sequence/route/${encodeURIComponent(route.id)}`
-    )
-      .then((res) => {
-        if (!res.ok) return null;
-        return res.json();
-      })
-      .then((d) => {
-        if (d) {
-          setLocalSeq(d as SequenceData);
-          onSequenceGenerated(route.id, d as SequenceData);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setChecked(true));
-  }, [route.id, route.has_sequence, seqData, projectId, onSequenceGenerated]);
-
-  const handleGenerate = () => {
-    setGenerating(true);
-    setSeqError(null);
-
-    fetch(
-      `${API}/projects/${encodeURIComponent(projectId)}/sequence/route`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          method: route.method,
-          path: route.path,
-          file: route.file,
-          component: route.component,
-        }),
-      }
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to generate sequence diagram");
-        return res.json();
-      })
-      .then((d: SequenceData) => {
-        setLocalSeq(d);
-        onSequenceGenerated(route.id, d);
-      })
-      .catch((e) => setSeqError(e.message))
-      .finally(() => setGenerating(false));
-  };
-
-  const displaySeq = localSeq || seqData;
-
-  return (
-    <div className="api-detail">
-      {/* Main info card */}
-      <div className="api-detail-card">
-        <div className="api-detail-header">
-          <span className="api-detail-method" style={{ background: color }}>
-            {route.method}
-          </span>
-          <span className="api-detail-path">{route.path}</span>
-        </div>
-
-        <div className="api-detail-divider" />
-
-        <div className="api-detail-grid">
-          <div className="api-detail-row">
-            <span className="api-detail-label">COMPONENT</span>
-            <span className="api-detail-value">{route.component || "unknown"}</span>
-          </div>
-          <div className="api-detail-row">
-            <span className="api-detail-label">FILE</span>
-            <span className="api-detail-value api-detail-mono">{route.file}</span>
-          </div>
-        </div>
-
-        <div className="api-detail-divider" />
-
-        <div className="api-detail-section">
-          <span className="api-detail-label">SEQUENCE DIAGRAM</span>
-          {!displaySeq && checked && (
-            <button
-              className="btn btn-secondary btn-sm"
-              style={{ marginTop: 8 }}
-              disabled={generating}
-              onClick={handleGenerate}
-            >
-              {generating ? "Generating…" : "Generate Sequence Diagram"}
-            </button>
-          )}
-          {seqError && (
-            <p style={{ color: "#ef4444", fontSize: 12, marginTop: 6 }}>{seqError}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Description */}
-      {description && (
-        <div className="api-description-card">
-          <span className="api-detail-label">WHAT THIS ROUTE LIKELY DOES</span>
-          <p className="api-description-text">{description}</p>
-        </div>
-      )}
-
-      {/* Inline sequence diagram */}
-      {displaySeq && (
-        <div className="api-seq-inline">
-          <div className="api-seq-badge">
-            <span
-              className="api-detail-method"
-              style={{ background: color, fontSize: 11, padding: "2px 8px" }}
-            >
-              {route.method}
-            </span>
-            <span style={{ color: "#e2e8f0", fontSize: 13, marginLeft: 8 }}>
-              {route.path}
-            </span>
-          </div>
-          <SequenceDiagram data={displaySeq} />
-          <button
-            className="btn btn-secondary btn-sm"
-            style={{ marginTop: 8 }}
-            disabled={generating}
-            onClick={handleGenerate}
-          >
-            {generating ? "Regenerating…" : "Regenerate"}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
+/* ── Route detail sub-component (now handled by RequestJourney) ── */

@@ -10,7 +10,8 @@ from app.models.graph_node import GraphNode  # noqa: F401 — registers the mode
 from app.models.graph_edge import GraphEdge  # noqa: F401 — registers the model
 from app.models.simulation_run import SimulationRun  # noqa: F401 — registers the model
 from app.models.sequence_diagram import SequenceDiagram  # noqa: F401 — registers the model
-from app.routers import projects, uploads, scans, graphs, simulations, briefs, deep_dive, sequences, routes
+from app.models.route_analysis import RouteAnalysis  # noqa: F401 — registers the model
+from app.routers import projects, uploads, scans, graphs, simulations, briefs, deep_dive, sequences, routes, analyze
 
 app = FastAPI(title="Chaos Twin API")
 
@@ -22,7 +23,9 @@ app.include_router(simulations.router)
 app.include_router(briefs.router)
 app.include_router(deep_dive.router)
 app.include_router(sequences.router)
+app.include_router(sequences.admin_router)
 app.include_router(routes.router)
+app.include_router(analyze.router)
 
 app.add_middleware(
     CORSMiddleware,

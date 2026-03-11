@@ -635,19 +635,34 @@ _LIBRARY_NAMES: set[str] = {"lib", "library", "sdk", "packages", "shared", "comm
 _CLI_NAMES: set[str] = {"cli", "cmd", "command"}
 
 
+_SERVER_ROUTE_PATTERNS = re.compile(
+    r"@(app|router)\.(get|post|put|delete|patch|route)\b"
+    r"|app\.(get|post|put|delete|patch|use)\("
+    r"|@(Get|Post|Put|Delete|Patch|Request)Mapping\b"
+    r"|HandleFunc\(",
+    re.I,
+)
+_DB_DEPS = {
+    "sqlalchemy", "mongoose", "prisma", "sequelize", "typeorm",
+    "mikro-orm", "pg", "mysql", "mysql2", "psycopg2", "psycopg2-binary",
+    "pymongo", "peewee", "tortoise-orm", "django", "knex", "drizzle-orm",
+}
+_WORKER_DEPS = {"celery", "bull", "bullmq", "agenda", "sidekiq", "rq", "dramatiq"}
+_SERVER_ENTRY_NAMES = {
+    "server.ts", "server.js", "server.py",
+    "app.py", "main.py", "wsgi.py", "asgi.py",
+    "app.ts", "app.js",
+}
+
+
 def _classify_component_type(
     dir_path: str, dir_files: list[dict], basenames: set[str],
     direct_basenames: Optional[set[str]] = None,
 ) -> str:
     dn = os.path.basename(dir_path).lower() if dir_path != "." else ""
-    # Use direct-level basenames for marker checks when available
     top_bn = direct_basenames if direct_basenames else basenames
 
-    if top_bn & _FRONTEND_MARKERS:
-        return "frontend"
-    if top_bn & _BACKEND_MARKERS:
-        return "backend"
-
+    # ── quick wins from directory name ──
     if dn in _FRONTEND_NAMES:
         return "frontend"
     if dn in _BACKEND_NAMES:
@@ -661,17 +676,57 @@ def _classify_component_type(
     if dn in _CLI_NAMES:
         return "cli"
 
+    # ── gather signals ──
+    has_react_files = bool(basenames & {"App.tsx", "App.jsx", "main.tsx", "main.jsx"})
+    has_tsx_jsx = any(
+        f["extension"] in {".tsx", ".jsx"} for f in dir_files
+    )
+    has_frontend_marker = bool(top_bn & _FRONTEND_MARKERS)
+    has_backend_marker = bool(top_bn & _BACKEND_MARKERS)
+    has_dockerfile = "Dockerfile" in basenames or "dockerfile" in basenames
+    has_server_entry = bool(basenames & _SERVER_ENTRY_NAMES)
+
+    # Check deps from package.json or requirements.txt
+    dep_text = ""
+    for dep_file in ("package.json", "requirements.txt", "pyproject.toml",
+                     "Pipfile", "Gemfile", "go.mod"):
+        if dep_file in basenames:
+            content = _safe_read(os.path.join(dir_path, dep_file))
+            if content:
+                dep_text += content.lower() + "\n"
+
+    dep_names = set(re.findall(r'[\w][\w\-]+', dep_text)) if dep_text else set()
+    has_db_dep = bool(dep_names & _DB_DEPS)
+    has_worker_dep = bool(dep_names & _WORKER_DEPS)
+
+    # Check for server route patterns in source files
+    has_routes = False
+    for f in dir_files[:50]:  # limit to avoid reading too many files
+        if f["extension"] in {".py", ".ts", ".js", ".java", ".go", ".rb"}:
+            src = _safe_read(os.path.join(dir_path, os.path.basename(f["path"])))
+            if src and _SERVER_ROUTE_PATTERNS.search(src):
+                has_routes = True
+                break
+
+    # ── classify ──
+    looks_fe = has_react_files or (has_tsx_jsx and has_frontend_marker)
+    looks_be = (has_routes or has_db_dep or has_server_entry
+                or has_dockerfile or has_backend_marker)
+
+    if has_worker_dep:
+        return "service"
+    if looks_fe and looks_be:
+        return "fullstack"
+    if looks_fe:
+        return "frontend"
+    if looks_be:
+        return "backend"
+
+    # Fallback: specific basenames
     if basenames & {"Program.cs", "Startup.cs"}:
         return "backend"
-    if basenames & {"main.go", "main.py", "app.py", "server.py"}:
-        return "backend"
-    if basenames & {"main.tsx", "main.jsx", "App.tsx", "App.jsx"}:
-        return "frontend"
 
-    if "package.json" in basenames:
-        return "frontend"
-
-    return "unknown"
+    return "backend"
 
 
 def _find_entry_file(
@@ -1051,10 +1106,25 @@ _PY_ROUTE_RE = re.compile(
 _PY_DJANGO_URL = re.compile(
     r"""(?:path|re_path)\s*\(\s*[\"']([^\"']+)[\"']""",
 )
+# Matches: anyVar.get('/path', ...), router.post('/path', ...), etc.
 _JS_ROUTE_RE = re.compile(
-    r"(?:app|router)\.(get|post|put|delete|patch|all)\s*\(\s*[\"']([^\"']+)[\"']",
-    re.I,
+    r"\b(\w+)\.(get|post|put|delete|patch|all)\s*\(\s*[\"']([^\"']+)[\"']",
 )
+# Matches: .route('/path').get(...).post(...)
+_JS_ROUTE_CHAIN_RE = re.compile(
+    r"\.route\s*\(\s*[\"']([^\"']+)[\"']\s*\)"
+    r"((?:\s*\.\s*(?:get|post|put|delete|patch|all)\s*\([^)]*\))+)",
+)
+_JS_CHAIN_METHOD_RE = re.compile(r"\.(get|post|put|delete|patch|all)\s*\(")
+# Matches: router.use('/api/v1', subRouter)
+_JS_USE_PREFIX_RE = re.compile(
+    r"\b\w+\.use\s*\(\s*[\"']([^\"']+)[\"']\s*,",
+)
+# Filenames that are likely Express route definitions
+_JS_ROUTE_FILE_NAMES = {
+    "routes.js", "routes.ts", "router.js", "router.ts",
+    "routes.mjs", "router.mjs",
+}
 _JAVA_ROUTE_RE = re.compile(
     r"@(Get|Post|Put|Delete|Request)Mapping\s*\(\s*(?:value\s*=\s*)?[\"']([^\"']+)[\"']",
     re.I,
@@ -1067,6 +1137,21 @@ _RUBY_ROUTE_RE = re.compile(
     r"^\s*(get|post|put|delete|patch|resources?)\s+[\"':]+([^\"',\s]+)",
     re.M | re.I,
 )
+
+
+_TEST_PATH_SEGMENTS = {
+    "__tests__", "__test__", "__fixtures__", "fixtures", "mocks", "test",
+}
+_TEST_FILE_SUFFIXES = (".spec.ts", ".spec.js", ".test.ts", ".test.js",
+                        ".spec.tsx", ".spec.jsx", ".test.tsx", ".test.jsx")
+
+
+def _is_test_file(path: str) -> bool:
+    """Return True if *path* looks like a test file or lives in a test directory."""
+    if path.endswith(_TEST_FILE_SUFFIXES):
+        return True
+    parts = path.replace("\\", "/").split("/")
+    return bool(set(parts) & _TEST_PATH_SEGMENTS)
 
 
 def _detect_routes(
@@ -1089,6 +1174,8 @@ def _detect_routes(
         for f in files:
             if f["extension"] != ".py":
                 continue
+            if _is_test_file(f["path"]):
+                continue
             content = _safe_read(os.path.join(root, f["path"]))
             if not content:
                 continue
@@ -1110,19 +1197,69 @@ def _detect_routes(
 
     # JS/TS routes
     if any(l in languages for l in ("JavaScript", "TypeScript")):
-        for f in files:
-            if f["extension"] not in {".js", ".ts", ".jsx", ".tsx", ".mjs"}:
-                continue
+        # Sort files so route-specific files are scanned first (they get prefix detection)
+        js_files = [f for f in files
+                    if f["extension"] in {".js", ".ts", ".jsx", ".tsx", ".mjs"}
+                    and not _is_test_file(f["path"])]
+
+        def _is_route_file(fp: str) -> bool:
+            bn = os.path.basename(fp)
+            if bn in _JS_ROUTE_FILE_NAMES:
+                return True
+            # index.js inside a routes/ folder
+            if bn in {"index.js", "index.ts", "index.mjs"} and "/routes/" in fp:
+                return True
+            return False
+
+        js_files.sort(key=lambda f: (0 if _is_route_file(f["path"]) else 1))
+
+        # Collect mount prefixes from router.use('/prefix', ...) across all files
+        prefix_map: dict[str, str] = {}  # file_path → extracted prefix
+
+        seen_routes: set[tuple[str, str, str]] = set()
+
+        for f in js_files:
             content = _safe_read(os.path.join(root, f["path"]))
             if not content:
                 continue
+
+            file_prefix = ""
+            # Extract mount prefixes: router.use('/api/v1', ...)
+            for pm in _JS_USE_PREFIX_RE.finditer(content):
+                pfx = pm.group(1).rstrip("/")
+                if pfx and pfx.startswith("/"):
+                    file_prefix = pfx
+
+            # Standard route methods: anyVar.get('/path', handler)
             for m in _JS_ROUTE_RE.finditer(content):
-                routes.append({
-                    "method": m.group(1).upper(),
-                    "path": m.group(2),
-                    "file": f["path"],
-                    "component": _comp_name_for(f["path"]),
-                })
+                method = m.group(2).upper()
+                path = m.group(3)
+                key = (method, path, f["path"])
+                if key not in seen_routes:
+                    seen_routes.add(key)
+                    routes.append({
+                        "method": method,
+                        "path": path,
+                        "file": f["path"],
+                        "component": _comp_name_for(f["path"]),
+                    })
+
+            # Route chaining: .route('/path').get(...).post(...)
+            for m in _JS_ROUTE_CHAIN_RE.finditer(content):
+                chain_path = m.group(1)
+                chain_block = m.group(2)
+                for cm in _JS_CHAIN_METHOD_RE.finditer(chain_block):
+                    method = cm.group(1).upper()
+                    key = (method, chain_path, f["path"])
+                    if key not in seen_routes:
+                        seen_routes.add(key)
+                        routes.append({
+                            "method": method,
+                            "path": chain_path,
+                            "file": f["path"],
+                            "component": _comp_name_for(f["path"]),
+                        })
+
             # Next.js API routes
             if "/api/" in f["path"] and "export" in (content or ""):
                 if re.search(r"export\s+default\s+function", content):
@@ -1137,6 +1274,8 @@ def _detect_routes(
     if "Java" in languages:
         for f in files:
             if f["extension"] != ".java":
+                continue
+            if _is_test_file(f["path"]):
                 continue
             content = _safe_read(os.path.join(root, f["path"]))
             if not content:
@@ -1159,6 +1298,8 @@ def _detect_routes(
         for f in files:
             if f["extension"] != ".go":
                 continue
+            if _is_test_file(f["path"]):
+                continue
             content = _safe_read(os.path.join(root, f["path"]))
             if not content:
                 continue
@@ -1174,6 +1315,8 @@ def _detect_routes(
     if "Ruby" in languages:
         for f in files:
             if os.path.basename(f["path"]) != "routes.rb":
+                continue
+            if _is_test_file(f["path"]):
                 continue
             content = _safe_read(os.path.join(root, f["path"]))
             if not content:
@@ -1315,10 +1458,10 @@ def _infer_project_type(
     files: list[dict],
 ) -> str:
     comp_types = {c["type"] for c in components}
-    meaningful = [c for c in components if c["type"] in {"frontend", "backend", "service"}]
+    meaningful = [c for c in components if c["type"] in {"frontend", "backend", "service", "fullstack"}]
 
-    has_fe = "frontend" in comp_types
-    has_be = "backend" in comp_types
+    has_fe = "frontend" in comp_types or "fullstack" in comp_types
+    has_be = "backend" in comp_types or "fullstack" in comp_types
     has_svc = "service" in comp_types
 
     if len(meaningful) >= 3 or (has_fe and has_be and has_svc):
