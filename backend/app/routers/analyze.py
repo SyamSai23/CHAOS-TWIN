@@ -18,7 +18,8 @@ from app.models.upload import Upload
 from app.models.route_analysis import RouteAnalysis
 from app.services.ast_analyzer import RouteAnalyzer
 from app.services.phrase_generator import PhraseGenerator
-from app.services.route_analysis_utils import ensure_route_analysis_signature
+from app.services.identity import make_route_id
+from app.services.route_analysis_utils import build_route_analysis_from_route, ensure_route_analysis_signature
 from app.services.scanner_v3 import unwrap_root_dir
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,18 @@ def _enrich_with_phrases(analysis: dict, phrase_gen: PhraseGenerator) -> dict:
     return ensure_route_analysis_signature(analysis)
 
 
+def _find_scan_route(scan: Scan, route_id: str) -> dict | None:
+    for route in scan.routes or []:
+        if not isinstance(route, dict):
+            continue
+        method = str(route.get("method") or "ANY").upper()
+        path = str(route.get("path") or "")
+        file_path = str(route.get("file") or "")
+        if make_route_id(method, path, file_path) == route_id:
+            return route
+    return None
+
+
 # ── Endpoints ───────────────────────────────────────────────────────
 
 @router.post("/routes", response_model=BatchResult, status_code=201)
@@ -190,19 +203,35 @@ def analyze_single_route(
 @router.get("/routes")
 def get_all_analyses(project_id: str, db: Session = Depends(get_db)):
     """Return all stored route analyses for a project."""
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
+    scan, _ = _get_scan_and_workspace(project_id, db)
     rows = (
         db.query(RouteAnalysis)
         .filter(RouteAnalysis.project_id == project_id)
         .order_by(RouteAnalysis.method, RouteAnalysis.path)
         .all()
     )
+    stored_by_route_id = {
+        str(row.route_id): ensure_route_analysis_signature(dict(row.analysis_data or {}))
+        for row in rows
+        if isinstance(row.analysis_data, dict)
+    }
+    combined_routes: list[dict] = []
+    for route in scan.routes or []:
+        if not isinstance(route, dict):
+            continue
+        route_id = make_route_id(
+            str(route.get("method") or "ANY").upper(),
+            str(route.get("path") or ""),
+            str(route.get("file") or ""),
+        )
+        if route_id in stored_by_route_id:
+            combined_routes.append(stored_by_route_id[route_id])
+            continue
+        if route.get("request_flow"):
+            combined_routes.append(build_route_analysis_from_route(route))
     return {
-        "total": len(rows),
-        "routes": [r.analysis_data for r in rows],
+        "total": len(combined_routes),
+        "routes": combined_routes,
     }
 
 
@@ -244,6 +273,7 @@ def get_single_analysis(
     project_id: str, route_id: str, db: Session = Depends(get_db)
 ):
     """Return a single stored route analysis."""
+    scan, _ = _get_scan_and_workspace(project_id, db)
     row = (
         db.query(RouteAnalysis)
         .filter(
@@ -252,6 +282,11 @@ def get_single_analysis(
         )
         .first()
     )
-    if not row:
-        raise HTTPException(status_code=404, detail="Route analysis not found")
-    return ensure_route_analysis_signature(row.analysis_data)
+    if row and isinstance(row.analysis_data, dict):
+        return ensure_route_analysis_signature(dict(row.analysis_data))
+
+    route = _find_scan_route(scan, route_id)
+    if route and route.get("request_flow"):
+        return build_route_analysis_from_route(route)
+
+    raise HTTPException(status_code=404, detail="Route analysis not found")

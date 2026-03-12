@@ -6,7 +6,6 @@ uploaded ZIP codebase using deterministic heuristics only (no AI).
 
 from __future__ import annotations
 
-import ast
 import json
 import os
 import re
@@ -18,7 +17,10 @@ from xml.etree import ElementTree
 
 import yaml  # PyYAML — already in requirements.txt
 
-from app.services.identity import make_component_key
+from app.services.component_detection import detect_components as detect_deterministic_components
+from app.services.infrastructure_detection import detect_infrastructure as detect_deterministic_infrastructure
+from app.services.route_flow_extraction import enrich_routes_with_flows as enrich_routes_with_request_flows
+from app.services.route_extraction import detect_routes as detect_deterministic_routes
 
 # =====================================================================
 # SECTION 1 — Constants
@@ -498,7 +500,20 @@ def collect_marker_data(
         if not parsed:
             continue
         for d in parsed.get("dependencies", []):
-            deps["npm"].append({"name": d})
+            deps["npm"].append({
+                "name": d,
+                "manifest_path": rel,
+                "manifest_type": "package.json",
+                "section": "dependencies",
+            })
+        for d in parsed.get("devDependencies", []):
+            deps["npm"].append({
+                "name": d,
+                "manifest_path": rel,
+                "manifest_type": "package.json",
+                "section": "devDependencies",
+                "dev": True,
+            })
         all_npm = set(parsed.get("dependencies", []) + parsed.get("devDependencies", []))
         _npm_fw = {
             "react": "React", "vue": "Vue.js", "express": "Express",
@@ -513,7 +528,15 @@ def collect_marker_data(
     # requirements.txt
     for rel in fmap.get("requirements.txt", []):
         parsed_deps = _parse_requirements_txt(root, rel)
-        deps["python"].extend(parsed_deps)
+        deps["python"].extend([
+            {
+                **dep,
+                "manifest_path": rel,
+                "manifest_type": "requirements.txt",
+                "section": "dependencies",
+            }
+            for dep in parsed_deps
+        ])
         names = {d["name"].lower() for d in parsed_deps}
         for pkg, fw in [("fastapi", "FastAPI"), ("flask", "Flask"), ("django", "Django")]:
             if pkg in names:
@@ -523,7 +546,13 @@ def collect_marker_data(
     for rel in fmap.get("pyproject.toml", []):
         parsed = _parse_pyproject_toml(root, rel)
         for d in parsed.get("dependencies", []):
-            deps["python"].append({"name": d, "version": ""})
+            deps["python"].append({
+                "name": d,
+                "version": "",
+                "manifest_path": rel,
+                "manifest_type": "pyproject.toml",
+                "section": "dependencies",
+            })
         names = {d.lower() for d in parsed.get("dependencies", [])}
         for pkg, fw in [("fastapi", "FastAPI"), ("flask", "Flask"), ("django", "Django")]:
             if pkg in names:
@@ -549,7 +578,12 @@ def collect_marker_data(
     for rel in fmap.get("pom.xml", []):
         parsed = _parse_pom_xml(root, rel)
         for d in parsed.get("dependencies", []):
-            deps["java"].append({"name": d})
+            deps["java"].append({
+                "name": d,
+                "manifest_path": rel,
+                "manifest_type": "pom.xml",
+                "section": "dependencies",
+            })
         if any("spring" in d.lower() for d in parsed.get("dependencies", [])):
             frameworks.add("Spring Boot")
 
@@ -558,7 +592,12 @@ def collect_marker_data(
         for rel in fmap.get(name, []):
             gdeps = _parse_build_gradle(root, rel)
             for d in gdeps:
-                deps["java"].append({"name": d})
+                deps["java"].append({
+                    "name": d,
+                    "manifest_path": rel,
+                    "manifest_type": name,
+                    "section": "dependencies",
+                })
             if any("spring" in d.lower() for d in gdeps):
                 frameworks.add("Spring Boot")
 
@@ -566,7 +605,12 @@ def collect_marker_data(
     for rel in fmap.get("go.mod", []):
         parsed = _parse_go_mod(root, rel)
         for r in parsed.get("requires", []):
-            deps["go"].append({"name": r})
+            deps["go"].append({
+                "name": r,
+                "manifest_path": rel,
+                "manifest_type": "go.mod",
+                "section": "require",
+            })
         reqs = " ".join(parsed.get("requires", []))
         if "gin" in reqs:
             frameworks.add("Gin")
@@ -577,7 +621,12 @@ def collect_marker_data(
     for rel in fmap.get("Cargo.toml", []):
         parsed = _parse_cargo_toml(root, rel)
         for d in parsed.get("dependencies", []):
-            deps["rust"].append({"name": d})
+            deps["rust"].append({
+                "name": d,
+                "manifest_path": rel,
+                "manifest_type": "Cargo.toml",
+                "section": "dependencies",
+            })
         cdeps = " ".join(parsed.get("dependencies", []))
         if "actix" in cdeps:
             frameworks.add("Actix")
@@ -588,24 +637,42 @@ def collect_marker_data(
     for rel in fmap.get("Gemfile", []):
         gems = _parse_gemfile(root, rel)
         for g in gems:
-            deps["ruby"].append({"name": g["name"]})
+            deps["ruby"].append({
+                "name": g["name"],
+                "version": g.get("version", ""),
+                "manifest_path": rel,
+                "manifest_type": "Gemfile",
+                "section": "gem",
+            })
         if any(g["name"] == "rails" for g in gems):
             frameworks.add("Ruby on Rails")
 
     # composer.json
     for rel in fmap.get("composer.json", []):
         parsed = _parse_composer_json(root, rel)
+        for d in parsed.get("require", []):
+            deps.setdefault("php", []).append({
+                "name": d,
+                "manifest_path": rel,
+                "manifest_type": "composer.json",
+                "section": "require",
+            })
         if "laravel/framework" in parsed.get("require", []):
             frameworks.add("Laravel")
 
     # Deduplicate
     env_vars = sorted(set(env_vars))
     for key in deps:
-        seen: set[str] = set()
+        seen: set[tuple[str, str, str]] = set()
         unique: list[dict] = []
         for d in deps[key]:
-            if d["name"] not in seen:
-                seen.add(d["name"])
+            dep_key = (
+                str(d.get("name") or "").lower(),
+                str(d.get("manifest_path") or "."),
+                str(d.get("section") or "dependencies"),
+            )
+            if dep_key not in seen:
+                seen.add(dep_key)
                 unique.append(d)
         deps[key] = unique
 
@@ -618,260 +685,11 @@ def collect_marker_data(
     }
 
 
-# =====================================================================
-# SECTION 5 — Component Detection (strict 2-of-3 rule)
-# =====================================================================
-
-_FRONTEND_MARKERS: set[str] = {
-    "vite.config.ts", "vite.config.js", "next.config.js", "next.config.mjs",
-    "angular.json", "nuxt.config.js", "nuxt.config.ts",
-}
-_BACKEND_MARKERS: set[str] = {
-    "requirements.txt", "pyproject.toml", "Pipfile", "go.mod",
-    "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts",
-    "Gemfile", "composer.json",
-}
-_FRONTEND_NAMES: set[str] = {"frontend", "client", "web", "ui"}
-_BACKEND_NAMES: set[str] = {"backend", "server", "api"}
-_SERVICE_NAMES: set[str] = {"service", "svc", "microservice"}
-_WORKER_NAMES: set[str] = {"worker", "scheduler", "cron", "jobs", "consumer"}
-_LIBRARY_NAMES: set[str] = {"lib", "library", "sdk", "packages", "shared", "common"}
-_CLI_NAMES: set[str] = {"cli", "cmd", "command"}
-
-
-_SERVER_ROUTE_PATTERNS = re.compile(
-    r"@(app|router)\.(get|post|put|delete|patch|route)\b"
-    r"|app\.(get|post|put|delete|patch|use)\("
-    r"|@(Get|Post|Put|Delete|Patch|Request)Mapping\b"
-    r"|HandleFunc\(",
-    re.I,
-)
-_DB_DEPS = {
-    "sqlalchemy", "mongoose", "prisma", "sequelize", "typeorm",
-    "mikro-orm", "pg", "mysql", "mysql2", "psycopg2", "psycopg2-binary",
-    "pymongo", "peewee", "tortoise-orm", "django", "knex", "drizzle-orm",
-}
-_WORKER_DEPS = {"celery", "bull", "bullmq", "agenda", "sidekiq", "rq", "dramatiq"}
-_SERVER_ENTRY_NAMES = {
-    "server.ts", "server.js", "server.py",
-    "app.py", "main.py", "wsgi.py", "asgi.py",
-    "app.ts", "app.js",
-}
-
-
-def _classify_component_type(
-    dir_path: str, dir_files: list[dict], basenames: set[str],
-    direct_basenames: Optional[set[str]] = None,
-) -> str:
-    dn = os.path.basename(dir_path).lower() if dir_path != "." else ""
-    top_bn = direct_basenames if direct_basenames else basenames
-
-    # ── quick wins from directory name ──
-    if dn in _FRONTEND_NAMES:
-        return "frontend"
-    if dn in _BACKEND_NAMES:
-        return "backend"
-    if dn in _SERVICE_NAMES:
-        return "service"
-    if dn in _WORKER_NAMES:
-        return "worker"
-    if dn in _LIBRARY_NAMES:
-        return "library"
-    if dn in _CLI_NAMES:
-        return "cli"
-
-    # ── gather signals ──
-    has_react_files = bool(basenames & {"App.tsx", "App.jsx", "main.tsx", "main.jsx"})
-    has_tsx_jsx = any(
-        f["extension"] in {".tsx", ".jsx"} for f in dir_files
-    )
-    has_frontend_marker = bool(top_bn & _FRONTEND_MARKERS)
-    has_backend_marker = bool(top_bn & _BACKEND_MARKERS)
-    has_dockerfile = "Dockerfile" in basenames or "dockerfile" in basenames
-    has_server_entry = bool(basenames & _SERVER_ENTRY_NAMES)
-
-    # Check deps from package.json or requirements.txt
-    dep_text = ""
-    for dep_file in ("package.json", "requirements.txt", "pyproject.toml",
-                     "Pipfile", "Gemfile", "go.mod"):
-        if dep_file in basenames:
-            content = _safe_read(os.path.join(dir_path, dep_file))
-            if content:
-                dep_text += content.lower() + "\n"
-
-    dep_names = set(re.findall(r'[\w][\w\-]+', dep_text)) if dep_text else set()
-    has_db_dep = bool(dep_names & _DB_DEPS)
-    has_worker_dep = bool(dep_names & _WORKER_DEPS)
-
-    # Check for server route patterns in source files
-    has_routes = False
-    for f in dir_files[:50]:  # limit to avoid reading too many files
-        if f["extension"] in {".py", ".ts", ".js", ".java", ".go", ".rb"}:
-            src = _safe_read(os.path.join(dir_path, os.path.basename(f["path"])))
-            if src and _SERVER_ROUTE_PATTERNS.search(src):
-                has_routes = True
-                break
-
-    # ── classify ──
-    looks_fe = has_react_files or (has_tsx_jsx and has_frontend_marker)
-    looks_be = (has_routes or has_db_dep or has_server_entry
-                or has_dockerfile or has_backend_marker)
-
-    if has_worker_dep:
-        return "service"
-    if looks_fe and looks_be:
-        return "fullstack"
-    if looks_fe:
-        return "frontend"
-    if looks_be:
-        return "backend"
-
-    # Fallback: specific basenames
-    if basenames & {"Program.cs", "Startup.cs"}:
-        return "backend"
-
-    return "backend"
-
-
-def _find_entry_file(
-    dir_files: list[dict], all_entry_names: set[str]
-) -> Optional[str]:
-    """Find the best entry file in a list of component files.
-
-    Prefers files at shallower depth within the component.
-    """
-    _PRIORITY = [
-        "main.py", "app.py", "server.py", "wsgi.py", "asgi.py",
-        "Program.cs", "Startup.cs",
-        "main.go", "main.rs",
-        "Main.java", "Application.java",
-        "server.ts", "server.js", "app.ts", "app.js",
-        "main.tsx", "main.jsx", "main.ts", "main.js",
-        "index.tsx", "index.jsx", "index.ts", "index.js",
-        "app.rb", "index.php",
-    ]
-    # Group by basename → list of full paths, sorted by depth (shallowest first)
-    from collections import defaultdict as _dd
-    by_name: dict[str, list[str]] = _dd(list)
-    for f in dir_files:
-        by_name[os.path.basename(f["path"])].append(f["path"])
-    for paths in by_name.values():
-        paths.sort(key=lambda p: p.count("/"))
-    for name in _PRIORITY:
-        if name in by_name:
-            return by_name[name][0]  # shallowest match
-    return None
-
-
-def _scoped_languages(dir_files: list[dict]) -> list[str]:
-    """Detect languages scoped to a set of files."""
-    counts: dict[str, int] = defaultdict(int)
-    for f in dir_files:
-        lang = EXTENSION_TO_LANGUAGE.get(f["extension"])
-        if lang and lang not in {"Markdown", "JSON", "YAML", "HTML", "CSS"}:
-            counts[lang] += 1
-    return sorted(l for l, c in counts.items() if c >= 1)
-
-
 def detect_components(
-    files: list[dict], languages: list[str]
+    files: list[dict], languages: list[str], root: str = "."
 ) -> list[dict]:
-    """Detect components using strict 2-of-3 rule."""
-    # Build entry file names for detected languages
-    all_entry_names: set[str] = set()
-    for lang in languages:
-        all_entry_names |= ENTRY_FILES.get(lang, set())
-    # Also include common ones always
-    all_entry_names |= {
-        "main.py", "app.py", "server.py", "manage.py",
-        "index.ts", "index.js", "App.tsx", "server.ts", "server.js",
-        "Program.cs", "Startup.cs", "main.go", "main.rs",
-        "Main.java", "Application.java", "app.rb", "index.php",
-    }
-
-    # Candidate directories: top-level, second-level, and root
-    candidates: set[str] = {"."}
-    for f in files:
-        parts = f["path"].split("/")
-        if len(parts) >= 2:
-            candidates.add(parts[0])
-        if len(parts) >= 3:
-            candidates.add(parts[0] + "/" + parts[1])
-
-    raw: list[dict] = []
-    for dir_path in sorted(candidates):
-        prefix = (dir_path + "/") if dir_path != "." else ""
-        dir_files = [f for f in files if f["path"].startswith(prefix)] if prefix else files
-        if not dir_files:
-            continue
-
-        basenames = {os.path.basename(f["path"]) for f in dir_files}
-
-        # Rule A — recognised entry file
-        rule_a = bool(basenames & all_entry_names)
-
-        # Rule B — 5+ source files
-        src_count = sum(1 for f in dir_files if f["extension"] in SOURCE_EXTENSIONS)
-        rule_b = src_count >= 5
-
-        # Rule C — runtime marker scoped to this folder (directly in it, not nested)
-        direct_files = (
-            [f for f in dir_files if "/" not in f["path"]]
-            if dir_path == "." else
-            [f for f in dir_files
-             if f["path"].count("/") == (dir_path.count("/") + 1)]
-        )
-        direct_basenames = {os.path.basename(f["path"]) for f in direct_files}
-        rule_c = bool(direct_basenames & RUNTIME_MARKERS)
-
-        if sum([rule_a, rule_b, rule_c]) < 2:
-            continue
-
-        comp_type = _classify_component_type(dir_path, dir_files, basenames, direct_basenames)
-        entry_file = _find_entry_file(dir_files, all_entry_names)
-        comp_langs = _scoped_languages(dir_files)
-
-        raw.append({
-            "name": os.path.basename(dir_path) if dir_path != "." else "root",
-            "type": comp_type,
-            "root_path": dir_path,
-            "component_key": make_component_key(dir_path),
-            "entry_file": entry_file,
-            "file_count": len(dir_files),
-            "languages": comp_langs,
-            # backward compat
-            "entry_points": [entry_file] if entry_file else [],
-            "markers": sorted(direct_basenames & RUNTIME_MARKERS),
-        })
-
-    # Suppress nested: if a parent is a component, drop children
-    raw.sort(key=lambda c: c["root_path"].count("/"))
-    accepted: list[dict] = []
-    for comp in raw:
-        is_nested = any(
-            comp["root_path"].startswith(a["root_path"] + "/")
-            for a in accepted if a["root_path"] != "."
-        )
-        if not is_nested:
-            accepted.append(comp)
-
-    # Drop "." root only if sub-components cover all significant source files
-    non_root = [c for c in accepted if c["root_path"] != "."]
-    root_comp = next((c for c in accepted if c["root_path"] == "."), None)
-    if non_root and root_comp:
-        claimed = [c["root_path"] + "/" for c in non_root]
-        unclaimed_src = sum(
-            1 for f in files
-            if f["extension"] in SOURCE_EXTENSIONS
-            and not any(f["path"].startswith(p) for p in claimed)
-        )
-        if unclaimed_src >= 5:
-            # Root has significant unclaimed files — keep it as a component
-            root_comp["name"] = "root"
-        else:
-            accepted = non_root
-
-    return accepted
+    """Detect components with deterministic grouping, role, and ownership signals."""
+    return detect_deterministic_components(files=files, languages=languages, root=root)
 
 
 # =====================================================================
@@ -1104,52 +922,12 @@ def _build_import_graph(
 # SECTION 7 — API Route Detection
 # =====================================================================
 
-_PY_ROUTE_RE = re.compile(
-    r"@(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*[\"']([^\"']+)[\"']",
-    re.I,
-)
-_PY_DJANGO_URL = re.compile(
-    r"""(?:path|re_path)\s*\(\s*[\"']([^\"']+)[\"']""",
-)
-# Matches: anyVar.get('/path', ...), router.post('/path', ...), etc.
-_JS_ROUTE_RE = re.compile(
-    r"\b(\w+)\.(get|post|put|delete|patch|all)\s*\(\s*[\"']([^\"']+)[\"']",
-)
-# Matches: .route('/path').get(...).post(...)
-_JS_ROUTE_CHAIN_RE = re.compile(
-    r"\.route\s*\(\s*[\"']([^\"']+)[\"']\s*\)"
-    r"((?:\s*\.\s*(?:get|post|put|delete|patch|all)\s*\([^)]*\))+)",
-)
-_JS_CHAIN_METHOD_RE = re.compile(r"\.(get|post|put|delete|patch|all)\s*\(")
-# Matches: router.use('/api/v1', subRouter)
-_JS_USE_PREFIX_RE = re.compile(
-    r"\b\w+\.use\s*\(\s*[\"']([^\"']+)[\"']\s*,",
-)
-# Filenames that are likely Express route definitions
-_JS_ROUTE_FILE_NAMES = {
-    "routes.js", "routes.ts", "router.js", "router.ts",
-    "routes.mjs", "router.mjs",
-}
-_JAVA_ROUTE_RE = re.compile(
-    r"@(Get|Post|Put|Delete|Request)Mapping\s*\(\s*(?:value\s*=\s*)?[\"']([^\"']+)[\"']",
-    re.I,
-)
-_GO_ROUTE_RE = re.compile(
-    r"""(?:http\.HandleFunc|[a-z]\.(?:GET|POST|PUT|DELETE|PATCH|Handle))\s*\(\s*[\"']([^\"']+)[\"']""",
-    re.I,
-)
-_RUBY_ROUTE_RE = re.compile(
-    r"^\s*(get|post|put|delete|patch|resources?)\s+[\"':]+([^\"',\s]+)",
-    re.M | re.I,
-)
-
 
 _TEST_PATH_SEGMENTS = {
     "__tests__", "__test__", "__fixtures__", "fixtures", "mocks", "test",
 }
 _TEST_FILE_SUFFIXES = (".spec.ts", ".spec.js", ".test.ts", ".test.js",
                         ".spec.tsx", ".spec.jsx", ".test.tsx", ".test.jsx")
-_PY_ROUTE_DECORATORS = {"get", "post", "put", "delete", "patch", "head", "options"}
 
 
 def _is_test_file(path: str) -> bool:
@@ -1160,246 +938,11 @@ def _is_test_file(path: str) -> bool:
     return bool(set(parts) & _TEST_PATH_SEGMENTS)
 
 
-def _extract_python_routes(content: str) -> list[tuple[str, str]]:
-    """Extract real Python route decorators from AST instead of raw text regexes.
-
-    This avoids matching examples inside docstrings or comments.
-    """
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return []
-
-    routes: list[tuple[str, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for dec in node.decorator_list:
-            if not isinstance(dec, ast.Call):
-                continue
-            if not isinstance(dec.func, ast.Attribute):
-                continue
-            method = dec.func.attr.lower()
-            if method not in _PY_ROUTE_DECORATORS or not dec.args:
-                continue
-            first_arg = dec.args[0]
-            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-                routes.append((method.upper(), first_arg.value))
-    return routes
-
-
-def _has_django_url_import(tree: ast.AST) -> bool:
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.module != "django.urls":
-            continue
-        for alias in node.names:
-            if alias.name in {"path", "re_path"}:
-                return True
-    return False
-
-
-def _extract_django_routes(content: str) -> list[str]:
-    """Extract Django url() declarations only when the file imports django.urls helpers."""
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return []
-
-    if not _has_django_url_import(tree):
-        return []
-
-    routes: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not isinstance(node.func, ast.Name) or node.func.id not in {"path", "re_path"}:
-            continue
-        if not node.args:
-            continue
-        first_arg = node.args[0]
-        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-            routes.append(first_arg.value)
-    return routes
-
-
 def _detect_routes(
     files: list[dict], languages: list[str], root: str, components: list[dict]
 ) -> list[dict]:
     """Detect API routes for supported languages/frameworks."""
-    routes: list[dict] = []
-
-    def _comp_name_for(path: str) -> str:
-        for c in components:
-            pref = (c["root_path"] + "/") if c["root_path"] != "." else ""
-            if pref and path.startswith(pref):
-                return c["name"]
-            if not pref and c["root_path"] == ".":
-                return c["name"]
-        return ""
-
-    # Python routes
-    if "Python" in languages:
-        for f in files:
-            if f["extension"] != ".py":
-                continue
-            if _is_test_file(f["path"]):
-                continue
-            content = _safe_read(os.path.join(root, f["path"]))
-            if not content:
-                continue
-            for method, route_path in _extract_python_routes(content):
-                routes.append({
-                    "method": method,
-                    "path": route_path,
-                    "file": f["path"],
-                    "component": _comp_name_for(f["path"]),
-                })
-            # Django url patterns
-            for route_path in _extract_django_routes(content):
-                routes.append({
-                    "method": "ANY",
-                    "path": route_path,
-                    "file": f["path"],
-                    "component": _comp_name_for(f["path"]),
-                })
-
-    # JS/TS routes
-    if any(l in languages for l in ("JavaScript", "TypeScript")):
-        # Sort files so route-specific files are scanned first (they get prefix detection)
-        js_files = [f for f in files
-                    if f["extension"] in {".js", ".ts", ".jsx", ".tsx", ".mjs"}
-                    and not _is_test_file(f["path"])]
-
-        def _is_route_file(fp: str) -> bool:
-            bn = os.path.basename(fp)
-            if bn in _JS_ROUTE_FILE_NAMES:
-                return True
-            # index.js inside a routes/ folder
-            if bn in {"index.js", "index.ts", "index.mjs"} and "/routes/" in fp:
-                return True
-            return False
-
-        js_files.sort(key=lambda f: (0 if _is_route_file(f["path"]) else 1))
-
-        # Collect mount prefixes from router.use('/prefix', ...) across all files
-        prefix_map: dict[str, str] = {}  # file_path → extracted prefix
-
-        seen_routes: set[tuple[str, str, str]] = set()
-
-        for f in js_files:
-            content = _safe_read(os.path.join(root, f["path"]))
-            if not content:
-                continue
-
-            file_prefix = ""
-            # Extract mount prefixes: router.use('/api/v1', ...)
-            for pm in _JS_USE_PREFIX_RE.finditer(content):
-                pfx = pm.group(1).rstrip("/")
-                if pfx and pfx.startswith("/"):
-                    file_prefix = pfx
-
-            # Standard route methods: anyVar.get('/path', handler)
-            for m in _JS_ROUTE_RE.finditer(content):
-                method = m.group(2).upper()
-                path = m.group(3)
-                key = (method, path, f["path"])
-                if key not in seen_routes:
-                    seen_routes.add(key)
-                    routes.append({
-                        "method": method,
-                        "path": path,
-                        "file": f["path"],
-                        "component": _comp_name_for(f["path"]),
-                    })
-
-            # Route chaining: .route('/path').get(...).post(...)
-            for m in _JS_ROUTE_CHAIN_RE.finditer(content):
-                chain_path = m.group(1)
-                chain_block = m.group(2)
-                for cm in _JS_CHAIN_METHOD_RE.finditer(chain_block):
-                    method = cm.group(1).upper()
-                    key = (method, chain_path, f["path"])
-                    if key not in seen_routes:
-                        seen_routes.add(key)
-                        routes.append({
-                            "method": method,
-                            "path": chain_path,
-                            "file": f["path"],
-                            "component": _comp_name_for(f["path"]),
-                        })
-
-            # Next.js API routes
-            if "/api/" in f["path"] and "export" in (content or ""):
-                if re.search(r"export\s+default\s+function", content):
-                    routes.append({
-                        "method": "ANY",
-                        "path": "/" + f["path"].split("/pages/")[-1].replace(".ts", "").replace(".js", ""),
-                        "file": f["path"],
-                        "component": _comp_name_for(f["path"]),
-                    })
-
-    # Java routes
-    if "Java" in languages:
-        for f in files:
-            if f["extension"] != ".java":
-                continue
-            if _is_test_file(f["path"]):
-                continue
-            content = _safe_read(os.path.join(root, f["path"]))
-            if not content:
-                continue
-            for m in _JAVA_ROUTE_RE.finditer(content):
-                method_word = m.group(1).upper()
-                method = {
-                    "GET": "GET", "POST": "POST", "PUT": "PUT",
-                    "DELETE": "DELETE", "REQUEST": "ANY",
-                }.get(method_word, method_word)
-                routes.append({
-                    "method": method,
-                    "path": m.group(2),
-                    "file": f["path"],
-                    "component": _comp_name_for(f["path"]),
-                })
-
-    # Go routes
-    if "Go" in languages:
-        for f in files:
-            if f["extension"] != ".go":
-                continue
-            if _is_test_file(f["path"]):
-                continue
-            content = _safe_read(os.path.join(root, f["path"]))
-            if not content:
-                continue
-            for m in _GO_ROUTE_RE.finditer(content):
-                routes.append({
-                    "method": "ANY",
-                    "path": m.group(1),
-                    "file": f["path"],
-                    "component": _comp_name_for(f["path"]),
-                })
-
-    # Ruby routes
-    if "Ruby" in languages:
-        for f in files:
-            if os.path.basename(f["path"]) != "routes.rb":
-                continue
-            if _is_test_file(f["path"]):
-                continue
-            content = _safe_read(os.path.join(root, f["path"]))
-            if not content:
-                continue
-            for m in _RUBY_ROUTE_RE.finditer(content):
-                method_word = m.group(1).lower()
-                method = method_word.upper() if method_word in {"get", "post", "put", "delete", "patch"} else "ANY"
-                routes.append({
-                    "method": method,
-                    "path": m.group(2),
-                    "file": f["path"],
-                    "component": _comp_name_for(f["path"]),
-                })
-
-    return routes
+    return detect_deterministic_routes(files=files, languages=languages, root=root, components=components)
 
 
 # =====================================================================
@@ -1630,13 +1173,33 @@ def run_full_scan(effective_root: str) -> dict[str, Any]:
     env_variables = marker_data["env_variables"]
 
     # 4. Component detection
-    components = detect_components(files, languages)
+    components = detect_components(files, languages, effective_root)
+
+    infra_data = detect_deterministic_infrastructure(
+        files=files,
+        root=effective_root,
+        components=components,
+        dependencies=dependencies,
+        docker_services=docker_services,
+        env_variables=env_variables,
+        service_graph=service_graph,
+    )
+    dependencies = infra_data["dependencies"]
+    docker_services = infra_data["docker_services"]
+    components = infra_data["components"]
 
     # 5. Import graph
     import_graph = _build_import_graph(files, languages, effective_root, components)
 
     # 6. Route detection
     routes = _detect_routes(files, languages, effective_root, components)
+    routes = enrich_routes_with_request_flows(
+        files=files,
+        root=effective_root,
+        routes=routes,
+        components=components,
+        import_graph=import_graph,
+    )
 
     # 7. Execution flow
     execution_flow = _infer_execution_flow(components, import_graph, routes, files)

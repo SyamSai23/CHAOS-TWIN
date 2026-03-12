@@ -578,6 +578,7 @@ def _candidate_from_evidence(
     confidence: Optional[dict],
     resolved_via: list[str],
 ) -> Candidate:
+    evidence_metadata = dict(getattr(evidence, "metadata", {}) or {})
     return Candidate(
         source_type=source_type,
         source_id=source_id,
@@ -596,6 +597,7 @@ def _candidate_from_evidence(
         confidence=confidence,
         resolved_via=resolved_via,
         metadata={
+            **evidence_metadata,
             "rule_name": evidence.rule_name,
             "snippet_summary": evidence.snippet_summary,
             "detector_type": evidence.detector_type,
@@ -608,6 +610,33 @@ def _path_candidates_for_entity(context: RetrievalContext, entity, source_type: 
     candidates: list[Candidate] = []
     confidence = _confidence_from_value(getattr(entity, "confidence", None))
     entity_kind = getattr(getattr(entity, "entity_kind", None), "value", None)
+    entity_metadata = dict(getattr(entity, "metadata", {}) or {})
+    best_target = dict(entity_metadata.get("best_target") or {})
+
+    if best_target.get("file_path"):
+        candidates.append(
+            Candidate(
+                source_type=source_type,
+                source_id=source_id,
+                retrieval_mode="entity_best_target",
+                selection_reason=str(best_target.get("selection_reason") or "entity exposes a ranked best-target anchor"),
+                file_path=best_target.get("file_path"),
+                source_root_kind=SourcePathKind.SOURCE_RELATIVE.value,
+                canonical_entity_id=getattr(entity, "id", None),
+                symbol_name=best_target.get("symbol_name") or best_target.get("handler_name"),
+                symbol_kind=best_target.get("symbol_kind"),
+                line_start=best_target.get("line_start"),
+                line_end=best_target.get("line_end"),
+                confidence=confidence,
+                resolved_via=["canonical_entity_metadata"],
+                metadata={
+                    **entity_metadata,
+                    "target_rank": best_target.get("target_rank"),
+                    "anchor_kind": best_target.get("anchor_kind"),
+                    "component_root": getattr(entity, "root_path", None),
+                },
+            )
+        )
 
     if getattr(entity, "path", None):
         candidates.append(
@@ -703,16 +732,22 @@ def _choose_best_candidate(candidates: list[Candidate]) -> Optional[Candidate]:
     if not candidates:
         return None
 
-    def key(candidate: Candidate) -> tuple[int, int, int, int, str, str]:
+    def key(candidate: Candidate) -> tuple[int, int, int, int, float, str, str]:
         priority = _candidate_priority(candidate)
+        mode_priority = _candidate_mode_priority(candidate)
+        target_rank = _candidate_target_rank(candidate)
         has_file_path = 1 if candidate.file_path else 0
         has_line_range = 1 if candidate.line_start is not None else 0
         has_symbol = 1 if candidate.symbol_name else 0
+        confidence_score = float((candidate.confidence or {}).get("score") or 0.0)
         return (
+            target_rank,
+            mode_priority,
             priority,
             has_file_path,
             has_line_range,
             has_symbol,
+            confidence_score,
             candidate.evidence_id or "",
             candidate.file_path or candidate.source_id,
         )
@@ -729,6 +764,44 @@ def _candidate_priority(candidate: Candidate) -> int:
         return 2
     if candidate.file_path:
         return 1
+    return 0
+
+
+def _candidate_mode_priority(candidate: Candidate) -> int:
+    mode_priorities = {
+        "evidence_first": 90,
+        "entity_best_target": 84,
+        "graph_edge_backing_evidence": 82,
+        "graph_node_via_canonical_entity": 78,
+        "entity_entry_file": 62,
+        "entity_direct_path": 58,
+        "insight_supporting_file": 56,
+        "graph_node_direct_file": 52,
+        "entity_component_root": 34,
+        "entity_fallback_key_file": 18,
+        "insight_scan_fallback": 10,
+    }
+    return mode_priorities.get(candidate.retrieval_mode, 24)
+
+
+def _candidate_target_rank(candidate: Candidate) -> int:
+    metadata = candidate.metadata or {}
+    raw_value = metadata.get("target_rank")
+    if raw_value is None and isinstance(metadata.get("best_target"), dict):
+        raw_value = metadata["best_target"].get("target_rank")
+    if raw_value is not None:
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            pass
+    if candidate.symbol_name and candidate.line_start is not None:
+        return 96
+    if candidate.line_start is not None:
+        return 88
+    if candidate.symbol_name:
+        return 80
+    if candidate.file_path:
+        return 52
     return 0
 
 
@@ -906,6 +979,10 @@ def _locate_symbol_line(lines: list[str], symbol_name: str) -> Optional[int]:
 
 
 def _selection_reason_for_evidence(evidence) -> str:
+    evidence_metadata = dict(getattr(evidence, "metadata", {}) or {})
+    explicit_reason = evidence_metadata.get("selection_reason")
+    if explicit_reason:
+        return str(explicit_reason)
     if evidence.symbol and evidence.line_start is not None:
         return "selected highest-quality evidence with explicit symbol and line range"
     if evidence.line_start is not None:

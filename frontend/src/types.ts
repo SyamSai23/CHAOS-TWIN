@@ -326,6 +326,55 @@ export type SystemIntelligenceSummaryResponse = {
 
 /* ── API Routes (API Explorer) ── */
 
+export type RouteCodeAnchor = {
+  file_path?: string | null;
+  symbol_name?: string | null;
+  class_name?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  anchor_kind?: string | null;
+  target_rank?: number | null;
+  selection_reason?: string | null;
+};
+
+export type RequestFlowStage = {
+  step?: number | null;
+  stage_type: string;
+  label: string;
+  file_path?: string | null;
+  symbol_name?: string | null;
+  class_name?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  confidence?: number | null;
+  provenance?: string | null;
+  is_inferred?: boolean;
+  anchor_kind?: string | null;
+  target_rank?: number | null;
+  selection_reason?: string | null;
+  code_anchor?: RouteCodeAnchor | null;
+  evidence?: RouteCodeAnchor | null;
+  hints?: string[];
+};
+
+export type RequestFlow = {
+  route_id?: string | null;
+  stage_count: number;
+  confidence?: number | null;
+  summary?: Record<string, unknown>;
+  stages: RequestFlowStage[];
+};
+
+export type RequestFlowSummary = {
+  stage_count: number;
+  confidence?: number | null;
+  has_request_flow: boolean;
+  has_service?: boolean;
+  has_repository?: boolean;
+  has_external?: boolean;
+  has_data_access?: boolean;
+};
+
 export type RouteItem = {
   id: string;
   method: string;
@@ -333,6 +382,24 @@ export type RouteItem = {
   file: string;
   component: string;
   has_sequence: boolean;
+  handler_function?: string | null;
+  controller_name?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  confidence?: number | null;
+  best_target?: RouteCodeAnchor | null;
+  request_flow_summary?: RequestFlowSummary | null;
+};
+
+export type RouteDetail = RouteItem & {
+  component_type: string;
+  router_prefix?: string | null;
+  middleware?: string[];
+  auth_hints?: string[];
+  validation_hints?: string[];
+  request_flow?: RequestFlow | null;
+  route_analysis?: RouteAnalysis | null;
+  analysis_source?: string;
 };
 
 export type ComponentGroup = {
@@ -350,12 +417,15 @@ export type RoutesResponse = {
 /* ── Route Analysis (AST analyzer) ── */
 
 export type AnalysisStep = {
-  step_id: string;
+  step_id?: string;
   type: string;
   label: string;
   technical: string;
   line_number: number | null;
-  is_error_path: boolean;
+  is_error_path?: boolean;
+  file?: string | null;
+  confidence?: number | null;
+  selection_reason?: string | null;
 };
 
 export type AnalysisPhase = {
@@ -374,7 +444,13 @@ export type AnalysisErrorPath = {
 export type AnalysisParameter = {
   name: string;
   type: string;
-  source: string;
+  source?: string;
+};
+
+export type AnalysisParticipant = {
+  id: string;
+  label: string;
+  type: string;
 };
 
 export type RouteAnalysis = {
@@ -389,11 +465,12 @@ export type RouteAnalysis = {
   return_type: string | null;
   phases: AnalysisPhase[];
   error_paths: AnalysisErrorPath[];
-  participants: string[];
+  participants: AnalysisParticipant[];
   has_database: boolean;
   has_filesystem: boolean;
   has_external: boolean;
   complexity: "simple" | "moderate" | "complex";
+  request_flow?: RequestFlow | null;
 };
 
 /* ── Utility ── */

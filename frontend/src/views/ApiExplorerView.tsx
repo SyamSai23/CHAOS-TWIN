@@ -254,6 +254,11 @@ function RouteRow({
         {route.method}
       </span>
       <span className="api-route-path">{route.path}</span>
+      {route.request_flow_summary?.has_request_flow && (
+        <span className="api-route-flow-badge" title="Deterministic request flow available">
+          {route.request_flow_summary.stage_count} steps
+        </span>
+      )}
       {route.has_sequence && <span className="api-seq-dot" title="Sequence diagram generated" />}
       <span className="api-route-file">{route.file}</span>
     </button>

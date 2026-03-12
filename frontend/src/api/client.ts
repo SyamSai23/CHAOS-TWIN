@@ -5,6 +5,7 @@ import type {
   Project,
   ProjectInsightsResponse,
   RouteAnalysis,
+  RouteDetail,
   RoutesResponse,
   ScanResult,
   SimulationResult,
@@ -147,6 +148,13 @@ export async function getCodePeek(projectId: string, params: CodePeekParams): Pr
 export async function fetchRoutes(projectId: string): Promise<RoutesResponse> {
   const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/routes`);
   return parseResponse(response, "Failed to load routes");
+}
+
+export async function fetchRouteDetail(projectId: string, routeId: string): Promise<RouteDetail> {
+  const response = await fetch(
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/routes/${encodeURIComponent(routeId)}`,
+  );
+  return parseResponse(response, "Failed to load route detail");
 }
 
 export async function fetchRouteAnalysis(projectId: string, routeId: string): Promise<RouteAnalysis> {

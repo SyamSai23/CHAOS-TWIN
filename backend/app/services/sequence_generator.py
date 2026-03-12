@@ -17,7 +17,7 @@ from app.models.scan import Scan
 from app.models.graph_node import GraphNode
 from app.models.graph_edge import GraphEdge
 from app.models.route_analysis import RouteAnalysis
-from app.services.route_analysis_utils import ensure_route_analysis_signature
+from app.services.route_analysis_utils import build_route_analysis_from_route, ensure_route_analysis_signature
 from app.services.identity import make_route_id
 
 
@@ -517,6 +517,8 @@ def generate_sequence_for_route(
         )
         if record and record.analysis_data:
             analysis = ensure_route_analysis_signature(record.analysis_data)
+    if not analysis and route.get("request_flow"):
+        analysis = build_route_analysis_from_route(route)
 
     phases: list[dict] = analysis.get("phases", [])
     error_paths: list[dict] = analysis.get("error_paths", [])
@@ -559,6 +561,8 @@ def generate_sequence_for_route(
     )
     if needs_db:
         add_p("database", "Database", "database")
+    if has_external:
+        add_p("external", "External API", "external")
 
     # ── Build messages from phases/steps ────────────────────────────
     messages: list[dict] = []
@@ -608,6 +612,11 @@ def generate_sequence_for_route(
                 step += 1
             elif stype == "service":
                 add_msg("handler", "handler", technical, "call", step)
+                step += 1
+            elif stype == "external":
+                add_msg("handler", "external", technical, "call", step)
+                step += 1
+                add_msg("external", "handler", "result", "return", step)
                 step += 1
             elif stype == "response":
                 status_map = {"POST": "201", "DELETE": "204", "GET": "200",

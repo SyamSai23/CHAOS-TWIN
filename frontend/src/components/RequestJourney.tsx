@@ -1,6 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
-import type { RouteItem, RouteAnalysis } from "../types";
+import {
+  AlertCircle,
+  ArrowRight,
+  CheckCircle2,
+  Code2,
+  Cpu,
+  Database,
+  GitBranch,
+  Globe,
+  RefreshCw,
+  Send,
+  Shield,
+} from "lucide-react";
+import type { RouteItem, RouteAnalysis, RouteDetail, AnalysisParticipant, RequestFlow, RequestFlowStage } from "../types";
 import type { SequenceData } from "../SequenceDiagram";
 import SequenceDiagram from "../SequenceDiagram";
 import ModeToggle from "./ModeToggle";
@@ -8,6 +20,7 @@ import PhaseCard from "./PhaseCard";
 import ErrorPathsSection from "./ErrorPathsSection";
 import {
   analyzeRoute,
+  fetchRouteDetail,
   fetchRouteAnalysis,
   fetchRouteSequence,
   generateRouteSequence,
@@ -17,6 +30,19 @@ const COMPLEXITY_COLORS: Record<string, string> = {
   simple: "#6b7280",
   moderate: "#eab308",
   complex: "#ef4444",
+};
+
+const STAGE_STYLES: Record<string, { icon: typeof ArrowRight; accent: string; label: string }> = {
+  dispatch: { icon: GitBranch, accent: "#f97316", label: "Dispatch" },
+  middleware: { icon: ArrowRight, accent: "#94a3b8", label: "Middleware" },
+  auth: { icon: Shield, accent: "#0ea5e9", label: "Auth" },
+  validation: { icon: CheckCircle2, accent: "#f59e0b", label: "Validation" },
+  handler: { icon: Code2, accent: "#f8fafc", label: "Handler" },
+  service: { icon: Cpu, accent: "#8b5cf6", label: "Service" },
+  repository: { icon: Database, accent: "#a855f7", label: "Repository" },
+  data_access: { icon: Database, accent: "#a855f7", label: "Data Access" },
+  external: { icon: Globe, accent: "#22c55e", label: "External" },
+  response: { icon: Send, accent: "#14b8a6", label: "Response" },
 };
 
 /* ── Route description from method + path ── */
@@ -56,14 +82,164 @@ function phaseLabel(analysis: RouteAnalysis, phaseId: string): string {
   return humanizePhaseName(phaseId, phase?.name ?? phaseId);
 }
 
-function summarizeParticipants(participants: string[]): string {
+function summarizeParticipants(participants: AnalysisParticipant[]): string {
   if (participants.length === 0) {
     return "Handler only";
   }
-  if (participants.length <= 3) {
-    return participants.join(" -> ");
+  const labels = participants.map((participant) => participant.label || participant.id);
+  if (labels.length <= 3) {
+    return labels.join(" -> ");
   }
-  return `${participants.slice(0, 3).join(" -> ")} +${participants.length - 3}`;
+  return `${labels.slice(0, 3).join(" -> ")} +${labels.length - 3}`;
+}
+
+function formatAnchor(detail: RouteDetail | null, route: RouteItem): string {
+  const anchor = detail?.best_target;
+  if (!anchor?.file_path) {
+    return route.file;
+  }
+  const line = anchor.line_start ? `:${anchor.line_start}` : "";
+  const symbol = anchor.symbol_name ? ` • ${anchor.symbol_name}` : "";
+  return `${anchor.file_path}${line}${symbol}`;
+}
+
+function formatConfidence(value: number | null | undefined): string {
+  if (typeof value !== "number") {
+    return "n/a";
+  }
+  return value.toFixed(2);
+}
+
+function formatOwner(detail: RouteDetail | null, analysis: RouteAnalysis | null, route: RouteItem): string {
+  const controller = detail?.controller_name ?? route.controller_name;
+  const handler = detail?.handler_function ?? analysis?.handler_function ?? route.handler_function;
+  if (controller && handler) {
+    return `${controller}.${handler}`;
+  }
+  if (handler) {
+    return handler;
+  }
+  return "unknown";
+}
+
+function formatStageAnchor(stage: RequestFlowStage): string | null {
+  const filePath = stage.file_path || stage.code_anchor?.file_path || stage.evidence?.file_path;
+  if (!filePath) {
+    return null;
+  }
+  const line = stage.line_start ?? stage.code_anchor?.line_start ?? stage.evidence?.line_start;
+  const className = stage.class_name || stage.code_anchor?.class_name || stage.evidence?.class_name;
+  const symbolName = stage.symbol_name || stage.code_anchor?.symbol_name || stage.evidence?.symbol_name;
+  const owner = className && symbolName ? `${className}.${symbolName}` : className || symbolName;
+  const lineLabel = line ? `:${line}` : "";
+  return owner ? `${filePath}${lineLabel} • ${owner}` : `${filePath}${lineLabel}`;
+}
+
+function summarizeRequestFlow(flow: RequestFlow | null): string | null {
+  if (!flow || flow.stages.length === 0) {
+    return null;
+  }
+  const stageTypes = Array.from(new Set(flow.stages.map((stage) => stage.stage_type)));
+  const important = stageTypes.filter((stageType) => !["dispatch", "response"].includes(stageType));
+  if (important.length === 0) {
+    return "This route is grounded to its entrypoint and response, with no additional internal steps confidently identified.";
+  }
+  const labels = important.slice(0, 4).map((stageType) => STAGE_STYLES[stageType]?.label.toLowerCase() ?? stageType.replace(/_/g, " "));
+  return `This route moves through ${labels.join(", ")} before returning a response. Only grounded steps are shown.`;
+}
+
+function sourceLabel(detail: RouteDetail | null, flow: RequestFlow | null, hasFallbackFlow: boolean): string {
+  if (flow && !hasFallbackFlow) {
+    return detail?.analysis_source === "derived_from_request_flow"
+      ? "Deterministic flow"
+      : "Direct request flow";
+  }
+  if (hasFallbackFlow) {
+    return "Compatibility fallback";
+  }
+  return "Compatibility analysis";
+}
+
+function flowStatusMessage(flow: RequestFlow | null, hasFallbackFlow: boolean): { tone: "fallback" | "caution" | "info"; text: string } | null {
+  if (!flow) {
+    return {
+      tone: "fallback",
+      text: "Detailed request flow is unavailable for this route, so the panel is using compatibility analysis only.",
+    };
+  }
+  if (hasFallbackFlow) {
+    return {
+      tone: "fallback",
+      text: "Showing compatibility-derived request flow because the direct route detail flow is unavailable.",
+    };
+  }
+  const lowConfidence = typeof flow.confidence === "number" && flow.confidence < 0.75;
+  const inferredSteps = flow.stages.some((stage) => stage.is_inferred);
+  if (lowConfidence || inferredSteps) {
+    return {
+      tone: "caution",
+      text: "Some steps are inferred or lower-confidence. Missing internal stages are intentionally omitted rather than guessed.",
+    };
+  }
+  return {
+    tone: "info",
+    text: "Request flow is grounded directly from deterministic backend evidence.",
+  };
+}
+
+function stageTone(stage: RequestFlowStage): string {
+  if (stage.stage_type === "external") return "external";
+  if (stage.stage_type === "repository" || stage.stage_type === "data_access") return "data";
+  if (stage.stage_type === "auth" || stage.stage_type === "validation") return "guard";
+  if (stage.is_inferred) return "inferred";
+  return "default";
+}
+
+function RequestFlowStageCard({ stage, index }: { stage: RequestFlowStage; index: number }) {
+  const stageStyle = STAGE_STYLES[stage.stage_type] ?? { icon: ArrowRight, accent: "#6b7280", label: stage.stage_type.replace(/_/g, " ") };
+  const StageIcon = stageStyle.icon;
+  const anchor = formatStageAnchor(stage);
+  const hints = stage.hints?.filter(Boolean) ?? [];
+  const showReason = Boolean(stage.selection_reason) && (stage.is_inferred || (stage.confidence ?? 1) < 0.75);
+
+  return (
+    <article className={`rj-stage-card rj-stage-tone-${stageTone(stage)}`}>
+      <div className="rj-stage-rail">
+        <span className="rj-stage-number">{index + 1}</span>
+        <span className="rj-stage-icon" style={{ color: stageStyle.accent, borderColor: `${stageStyle.accent}33` }}>
+          <StageIcon size={14} />
+        </span>
+      </div>
+
+      <div className="rj-stage-content">
+        <div className="rj-stage-topline">
+          <div className="rj-stage-badges">
+            <span className="rj-stage-kind" style={{ color: stageStyle.accent }}>{stageStyle.label}</span>
+            <span className={`rj-stage-grounding ${stage.is_inferred ? "is-inferred" : "is-direct"}`}>
+              {stage.is_inferred ? "Inferred" : "Direct"}
+            </span>
+            <span className="rj-stage-confidence">{formatConfidence(stage.confidence)}</span>
+          </div>
+        </div>
+
+        <h3 className="rj-stage-title">{stage.label}</h3>
+
+        {anchor && <p className="rj-stage-anchor">{anchor}</p>}
+
+        {hints.length > 0 && (
+          <div className="rj-stage-hints">
+            {hints.slice(0, 4).map((hint) => (
+              <span key={`${stage.step}:${hint}`} className="rj-stage-hint-chip">
+                {hint}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {showReason && <p className="rj-stage-reason">{stage.selection_reason}</p>}
+      </div>
+    </article>
+  );
 }
 
 function isSequenceCompatible(seq: SequenceData | null, analysis: RouteAnalysis | null): boolean {
@@ -129,10 +305,12 @@ export default function RequestJourney({
   onSequenceGenerated,
 }: Props) {
   const [mode, setMode] = useState<"story" | "technical">("story");
+  const [routeDetail, setRouteDetail] = useState<RouteDetail | null>(null);
   const [analysis, setAnalysis] = useState<RouteAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisCache, setAnalysisCache] = useState<Record<string, RouteAnalysis>>({});
+  const [detailCache, setDetailCache] = useState<Record<string, RouteDetail>>({});
 
   // Sequence diagram state (for technical mode)
   const [localSeq, setLocalSeq] = useState<SequenceData | null>(null);
@@ -148,17 +326,36 @@ export default function RequestJourney({
   /* ── Fetch analysis (story mode) ── */
 
   const fetchAnalysis = useCallback(async () => {
-    // Check cache first
+    if (detailCache[route.id]) {
+      const cachedDetail = detailCache[route.id];
+      setRouteDetail(cachedDetail);
+      setAnalysis(cachedDetail.route_analysis ?? analysisCache[route.id] ?? null);
+      return;
+    }
+
     if (analysisCache[route.id]) {
       setAnalysis(analysisCache[route.id]);
-      return;
     }
 
     setAnalysisLoading(true);
     setAnalysisError(null);
     setAnalysis(null);
+    setRouteDetail(null);
 
     try {
+      try {
+        const detail = await fetchRouteDetail(projectId, route.id);
+        setRouteDetail(detail);
+        setDetailCache((prev) => ({ ...prev, [route.id]: detail }));
+        if (detail.route_analysis) {
+          setAnalysis(detail.route_analysis);
+          setAnalysisCache((prev) => ({ ...prev, [route.id]: detail.route_analysis as RouteAnalysis }));
+          return;
+        }
+      } catch {
+        // Fall through to legacy route-analysis endpoints below.
+      }
+
       try {
         const a = await fetchRouteAnalysis(projectId, route.id);
         setAnalysis(a);
@@ -181,7 +378,7 @@ export default function RequestJourney({
     } finally {
       setAnalysisLoading(false);
     }
-  }, [route.id, route.method, route.path, route.file, route.component, projectId, analysisCache]);
+  }, [route.id, route.method, route.path, route.file, route.component, projectId, analysisCache, detailCache]);
 
   useEffect(() => {
     fetchAnalysis();
@@ -241,6 +438,19 @@ export default function RequestJourney({
   const sequenceIsCompatible = isSequenceCompatible(sequenceCandidate, analysis);
   const sequenceIsStale = Boolean(sequenceCandidate) && Boolean(analysis) && !sequenceIsCompatible;
   const visibleSeq = sequenceIsCompatible ? sequenceCandidate : null;
+  const directRequestFlow = routeDetail?.request_flow ?? null;
+  const fallbackRequestFlow = !directRequestFlow ? analysis?.request_flow ?? null : null;
+  const activeRequestFlow = directRequestFlow ?? fallbackRequestFlow;
+  const hasFallbackFlow = Boolean(!directRequestFlow && fallbackRequestFlow?.stages.length);
+  const hasRequestFlow = Boolean(activeRequestFlow?.stages.length);
+  const flowSource = sourceLabel(routeDetail, activeRequestFlow, hasFallbackFlow);
+  const flowStatus = flowStatusMessage(activeRequestFlow, hasFallbackFlow);
+  const routeOwner = formatOwner(routeDetail, analysis, route);
+  const routeSummary = summarizeRequestFlow(activeRequestFlow) ?? describeRoute(route.method, route.path);
+  const flowStageCount = routeDetail?.request_flow?.stage_count ?? route.request_flow_summary?.stage_count ?? displayPhases.length;
+  const flowConfidence = routeDetail?.request_flow?.confidence ?? route.request_flow_summary?.confidence ?? null;
+  const activeFile = routeDetail?.file || route.file;
+  const activeComponent = routeDetail?.component || route.component;
 
   /* ── Render ── */
 
@@ -262,12 +472,28 @@ export default function RequestJourney({
 
         <div className="api-detail-grid">
           <div className="api-detail-row">
+            <span className="api-detail-label">SOURCE</span>
+            <span className="api-detail-value">{flowSource}</span>
+          </div>
+          <div className="api-detail-row">
+            <span className="api-detail-label">OWNER</span>
+            <span className="api-detail-value api-detail-mono">{routeOwner}</span>
+          </div>
+          <div className="api-detail-row">
             <span className="api-detail-label">COMPONENT</span>
-            <span className="api-detail-value">{route.component || "unknown"}</span>
+            <span className="api-detail-value">{activeComponent || "unknown"}</span>
           </div>
           <div className="api-detail-row">
             <span className="api-detail-label">FILE</span>
-            <span className="api-detail-value api-detail-mono">{route.file}</span>
+            <span className="api-detail-value api-detail-mono">{activeFile}</span>
+          </div>
+          <div className="api-detail-row">
+            <span className="api-detail-label">FLOW STAGES</span>
+            <span className="api-detail-value">{flowStageCount || 0}</span>
+          </div>
+          <div className="api-detail-row">
+            <span className="api-detail-label">CODE ANCHOR</span>
+            <span className="api-detail-value api-detail-mono">{formatAnchor(routeDetail, route)}</span>
           </div>
           {mode === "technical" && analysis && (
             <div className="api-detail-row">
@@ -304,34 +530,72 @@ export default function RequestJourney({
             </div>
           )}
 
-          {analysis && !analysisLoading && (
+          {(routeDetail || analysis) && !analysisLoading && (
             <>
-              {/* Route description */}
-              <p className="rj-route-description">
-                {describeRoute(route.method, route.path)}
-              </p>
+              <p className="rj-route-description">{routeSummary}</p>
+
+              {flowStatus && (
+                <div className={`rj-flow-banner rj-flow-banner-${flowStatus.tone}`}>
+                  <AlertCircle size={14} />
+                  <span>{flowStatus.text}</span>
+                </div>
+              )}
 
               <div className="rj-analysis-overview">
                 <div className="rj-overview-card">
-                  <span className="rj-overview-label">PHASES</span>
-                  <span className="rj-overview-value">{displayPhases.length}</span>
+                  <span className="rj-overview-label">STAGES</span>
+                  <span className="rj-overview-value">{flowStageCount || 0}</span>
+                </div>
+                <div className="rj-overview-card">
+                  <span className="rj-overview-label">FLOW CONFIDENCE</span>
+                  <span className="rj-overview-value">{flowConfidence ?? "n/a"}</span>
+                </div>
+                <div className="rj-overview-card">
+                  <span className="rj-overview-label">FLOW SOURCE</span>
+                  <span className="rj-overview-value">{flowSource}</span>
                 </div>
                 <div className="rj-overview-card">
                   <span className="rj-overview-label">PARTICIPANTS</span>
-                  <span className="rj-overview-value">{summarizeParticipants(analysis.participants)}</span>
-                </div>
-                <div className="rj-overview-card">
-                  <span className="rj-overview-label">COMPLEXITY</span>
-                  <span
-                    className="complexity-badge"
-                    style={{ color: COMPLEXITY_COLORS[analysis.complexity] }}
-                  >
-                    {analysis.complexity}
-                  </span>
+                  <span className="rj-overview-value">{analysis ? summarizeParticipants(analysis.participants) : routeOwner}</span>
                 </div>
               </div>
 
-              {analysis.parameters.length > 0 && (
+              {hasRequestFlow && activeRequestFlow ? (
+                <div className="rj-journey-shell">
+                  <div className="rj-phases">
+                    <span className="rj-phases-label">REQUEST FLOW</span>
+                    <div className="rj-stage-list">
+                      {activeRequestFlow.stages.map((stage, index) => (
+                        <RequestFlowStageCard
+                          key={`${stage.step ?? index}:${stage.stage_type}:${stage.label}`}
+                          stage={stage}
+                          index={index}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rj-phases">
+                  <span className="rj-phases-label">COMPATIBILITY JOURNEY</span>
+                  {displayPhases.length > 0 ? (
+                    displayPhases.map((phase, i) => (
+                      <PhaseCard
+                        key={`${phase.phase_id}-${i}`}
+                        phase={{ ...phase, name: analysis ? phaseLabel(analysis, phase.phase_id) : humanizePhaseName(phase.phase_id, phase.name) }}
+                        index={i}
+                        mode="story"
+                      />
+                    ))
+                  ) : (
+                    <p className="text-muted" style={{ fontSize: 13 }}>
+                      No phases detected — handler may be too simple to decompose.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {analysis && analysis.parameters.length > 0 && (
                 <div className="params-section">
                   <span className="params-label">Parameters</span>
                   <div className="params-list">
@@ -356,27 +620,10 @@ export default function RequestJourney({
                 </div>
               )}
 
-              {/* Phases — preserve analyzer order, merge only adjacent duplicates */}
-              <div className="rj-phases">
-                <span className="rj-phases-label">REQUEST JOURNEY</span>
-                {displayPhases.length > 0 ? (
-                  displayPhases.map((phase, i) => (
-                    <PhaseCard
-                      key={`${phase.phase_id}-${i}`}
-                      phase={{ ...phase, name: phaseLabel(analysis, phase.phase_id) }}
-                      index={i}
-                      mode="story"
-                    />
-                  ))
-                ) : (
-                  <p className="text-muted" style={{ fontSize: 13 }}>
-                    No phases detected — handler may be too simple to decompose.
-                  </p>
-                )}
-              </div>
-
               {/* Error paths */}
-              <ErrorPathsSection errorPaths={analysis.error_paths} />
+              {analysis && analysis.error_paths.length > 0 && (
+                <ErrorPathsSection errorPaths={analysis.error_paths} />
+              )}
             </>
           )}
         </div>

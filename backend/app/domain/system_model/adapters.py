@@ -28,6 +28,7 @@ from app.domain.system_model.ids import (
     make_component_id,
     make_data_store_id,
     make_evidence_id,
+    make_external_integration_id,
     make_module_id,
     make_project_model_id,
     make_route_entity_id,
@@ -309,17 +310,28 @@ class _ModelBuilder:
                 continue
             root_path = normalize_path(raw_component.get("root_path") or ".")
             component_id = make_component_id(root_path)
+            best_target = dict(raw_component.get("best_target") or {})
+            best_target_file = normalize_path(best_target.get("file_path") or root_path)
             confidence_score = float(
                 (self.scan.confidence_scores or {}).get(raw_component.get("type", ""), 0.75)
             )
             evidence_id = self.add_evidence(
                 source_id=self.source.id,
-                file_path=root_path,
-                snippet_summary="Component detected from scanner output.",
+                file_path=best_target_file,
+                line_start=best_target.get("line_start"),
+                line_end=best_target.get("line_end"),
+                symbol=best_target.get("symbol_name"),
+                symbol_kind=best_target.get("symbol_kind"),
+                snippet_summary=str(best_target.get("selection_reason") or "Component detected from scanner output."),
                 detector_type="scanner_v3",
                 rule_name="component_detection",
                 extraction_source="scan.components",
-                metadata={"component_name": raw_component.get("name")},
+                metadata={
+                    "component_name": raw_component.get("name"),
+                    "target_rank": best_target.get("target_rank"),
+                    "anchor_kind": best_target.get("anchor_kind"),
+                    "selection_reason": best_target.get("selection_reason"),
+                },
             )
             component = Component(
                 id=component_id,
@@ -342,6 +354,13 @@ class _ModelBuilder:
                     "component_key": raw_component.get("component_key"),
                     "file_count": raw_component.get("file_count"),
                     "markers": list(raw_component.get("markers") or []),
+                    "key_files": list(raw_component.get("key_files") or []),
+                    "detected_roles": list(raw_component.get("detected_roles") or []),
+                    "role_counts": dict(raw_component.get("role_counts") or {}),
+                    "ownership_summary": dict(raw_component.get("ownership_summary") or {}),
+                    "boundary_evidence": list(raw_component.get("boundary_evidence") or []),
+                    "best_target": best_target,
+                    "confidence_label": raw_component.get("confidence_label"),
                 },
             )
             self.components[component_id] = component
@@ -408,7 +427,9 @@ class _ModelBuilder:
                 continue
             method = str(raw_route.get("method") or "GET").upper()
             path = str(raw_route.get("path") or "/")
-            file_path = normalize_path(raw_route.get("file") or ".")
+            best_target = dict(raw_route.get("best_target") or raw_route.get("evidence") or {})
+            file_path = normalize_path(best_target.get("file_path") or raw_route.get("file") or ".")
+            handler_name = raw_route.get("handler_function") or raw_route.get("handler")
             component_name = raw_route.get("component") or ""
             component_id = component_index.get(component_name)
             if not component_id and self.components:
@@ -420,11 +441,20 @@ class _ModelBuilder:
             evidence_id = self.add_evidence(
                 source_id=self.source.id,
                 file_path=file_path,
-                symbol=raw_route.get("handler"),
-                snippet_summary=f"Route {method} {path} detected from scan metadata.",
+                symbol=best_target.get("symbol_name") or handler_name,
+                symbol_kind=best_target.get("symbol_kind") or ("handler" if handler_name else None),
+                line_start=best_target.get("line_start") or raw_route.get("line_start"),
+                line_end=best_target.get("line_end") or raw_route.get("line_end"),
+                snippet_summary=str(best_target.get("selection_reason") or f"Route {method} {path} detected from scan metadata."),
                 detector_type="scanner_v3",
                 rule_name="route_detection",
                 extraction_source="scan.routes",
+                metadata={
+                    "target_rank": best_target.get("target_rank"),
+                    "anchor_kind": best_target.get("anchor_kind"),
+                    "selection_reason": best_target.get("selection_reason"),
+                    "controller_name": best_target.get("class_name") or raw_route.get("controller_name"),
+                },
             )
             self.routes[route_id] = Route(
                 id=route_id,
@@ -433,7 +463,7 @@ class _ModelBuilder:
                 path=path,
                 file_path=file_path,
                 component_id=component_id,
-                handler_name=raw_route.get("handler"),
+                handler_name=handler_name,
                 parameters=list(raw_route.get("parameters") or []),
                 confidence=make_confidence(
                     0.84,
@@ -443,7 +473,11 @@ class _ModelBuilder:
                     producer="build_project_model_from_scan",
                 ),
                 evidence_ids=[evidence_id],
-                metadata={"framework": raw_route.get("framework")},
+                metadata={
+                    "framework": raw_route.get("framework"),
+                    "best_target": best_target,
+                    "request_flow": raw_route.get("request_flow") or {},
+                },
             )
             self.add_relation(
                 source_id=component_id,
@@ -458,7 +492,7 @@ class _ModelBuilder:
                 component_id=component_id,
                 file_path=file_path,
                 reason="Route file should exist as a canonical module reference.",
-                symbol=raw_route.get("handler"),
+                symbol=handler_name,
                 symbol_kind="handler",
             )
             if module_id:
@@ -473,12 +507,22 @@ class _ModelBuilder:
                 )
 
     def build_infrastructure(self) -> None:
+        component_index = {component.name: component.id for component in self.components.values()}
+
         for docker_service in self.scan.docker_services or []:
             if not isinstance(docker_service, dict):
                 continue
             name = str(docker_service.get("name") or "")
             image = str(docker_service.get("image") or "")
-            detected = _match_keyword(name, _DB_KEYWORDS) or _match_keyword(image, _DB_KEYWORDS)
+            infra_meta = docker_service.get("infrastructure") or {}
+            detected = None
+            if infra_meta.get("entity_type") == "data_store":
+                detected = (
+                    str(infra_meta.get("name") or name or image),
+                    str(infra_meta.get("kind") or "service"),
+                )
+            else:
+                detected = _match_keyword(name, _DB_KEYWORDS) or _match_keyword(image, _DB_KEYWORDS)
             if not detected:
                 continue
             label, store_type = detected
@@ -516,6 +560,179 @@ class _ModelBuilder:
                     evidence_ids=[evidence_id],
                     qualifier=name or image,
                     score=0.9,
+                )
+
+        for raw_component in self.scan.components or []:
+            if not isinstance(raw_component, dict):
+                continue
+            component_name = raw_component.get("name") or ""
+            component_id = component_index.get(component_name)
+            if not component_id:
+                continue
+            for infra in raw_component.get("infrastructure") or []:
+                if not isinstance(infra, dict):
+                    continue
+                entity_type = str(infra.get("entity_type") or "data_store")
+                name = str(infra.get("name") or "")
+                kind = str(infra.get("kind") or "unknown")
+                confidence_score = float(infra.get("confidence") or 0.0)
+                signals = set(infra.get("signals") or [])
+                best_target = dict(infra.get("best_target") or {})
+                evidence_ids: list[str] = []
+                for evidence in infra.get("evidence") or []:
+                    if not isinstance(evidence, dict):
+                        continue
+                    evidence_ids.append(
+                        self.add_evidence(
+                            source_id=self.source.id,
+                            file_path=normalize_path(evidence.get("file") or raw_component.get("root_path") or "."),
+                            line_start=evidence.get("line_start"),
+                            line_end=evidence.get("line_end") or evidence.get("line_start"),
+                            snippet_summary=f"Infrastructure evidence for {name}.",
+                            snippet_excerpt=str(evidence.get("detail") or "")[:160],
+                            detector_type="scanner_v3",
+                            rule_name=str(evidence.get("type") or "infrastructure_detection"),
+                            extraction_source="scan.components.infrastructure",
+                            metadata={
+                                "component": component_name,
+                                "signal_type": evidence.get("type"),
+                                "source": evidence.get("source"),
+                                "target_rank": evidence.get("target_rank"),
+                                "selection_reason": evidence.get("selection_reason"),
+                            },
+                        )
+                    )
+
+                if entity_type == "external_integration":
+                    if confidence_score < 0.6 and signals == {"declared_dependency"}:
+                        continue
+                    integration_id = make_external_integration_id(self.source.id, name, kind)
+                    if integration_id not in self.external_integrations:
+                        self.external_integrations[integration_id] = ExternalIntegration(
+                            id=integration_id,
+                            source_ids=[self.source.id],
+                            name=name,
+                            kind=kind,
+                            provider=infra.get("provider") or name,
+                            confidence=make_confidence(
+                                confidence_score or 0.65,
+                                "External integration inferred from scanner infrastructure evidence.",
+                                len(evidence_ids),
+                                max(len(signals), 1),
+                                producer="build_project_model_from_scan",
+                            ),
+                            evidence_ids=evidence_ids,
+                            metadata={
+                                "technology": infra.get("technology"),
+                                "manifest_paths": list(infra.get("manifest_paths") or []),
+                                "best_target": best_target,
+                            },
+                        )
+                        self.add_relation(
+                            source_id=self.source.id,
+                            target_id=integration_id,
+                            relation_type=RelationType.CONTAINS,
+                            rationale="The analyzed source contains this detected external integration.",
+                            evidence_ids=evidence_ids,
+                            qualifier=name,
+                            score=max(confidence_score, 0.65),
+                        )
+                    else:
+                        integration = self.external_integrations[integration_id]
+                        integration.evidence_ids = sorted(set(integration.evidence_ids) | set(evidence_ids))
+                        integration.metadata = {
+                            **integration.metadata,
+                            "technology": integration.metadata.get("technology") or infra.get("technology"),
+                            "manifest_paths": sorted(
+                                set(integration.metadata.get("manifest_paths") or [])
+                                | set(infra.get("manifest_paths") or [])
+                            ),
+                            "best_target": _prefer_best_target(
+                                integration.metadata.get("best_target"),
+                                best_target,
+                            ),
+                        }
+                    self.add_relation(
+                        source_id=component_id,
+                        target_id=integration_id,
+                        relation_type=RelationType.INTEGRATES_WITH,
+                        rationale="Component-level infrastructure evidence shows this external integration.",
+                        evidence_ids=evidence_ids,
+                        qualifier=name,
+                        metadata={"signals": sorted(signals)},
+                        score=max(confidence_score, 0.65),
+                    )
+                    continue
+
+                if confidence_score < 0.5 and signals == {"declared_dependency"}:
+                    continue
+                store_id = make_data_store_id(self.source.id, name, kind)
+                if store_id not in self.data_stores:
+                    self.data_stores[store_id] = DataStore(
+                        id=store_id,
+                        source_ids=[self.source.id],
+                        name=name,
+                        kind=kind,
+                        technology=infra.get("technology") or name,
+                        confidence=make_confidence(
+                            confidence_score or 0.62,
+                            "Infrastructure inferred from combined scanner dependency, docker, and code evidence.",
+                            len(evidence_ids),
+                            max(len(signals), 1),
+                            producer="build_project_model_from_scan",
+                        ),
+                        evidence_ids=evidence_ids,
+                        metadata={
+                            "docker_services": list(infra.get("docker_services") or []),
+                            "manifest_paths": list(infra.get("manifest_paths") or []),
+                            "signals": sorted(signals),
+                            "best_target": best_target,
+                        },
+                    )
+                    self.add_relation(
+                        source_id=self.source.id,
+                        target_id=store_id,
+                        relation_type=RelationType.CONTAINS,
+                        rationale="The analyzed source contains this detected datastore or infrastructure service.",
+                        evidence_ids=evidence_ids,
+                        qualifier=name,
+                        score=max(confidence_score, 0.62),
+                    )
+                else:
+                    store = self.data_stores[store_id]
+                    store.evidence_ids = sorted(set(store.evidence_ids) | set(evidence_ids))
+                    store.metadata = {
+                        **store.metadata,
+                        "docker_services": sorted(
+                            set(store.metadata.get("docker_services") or [])
+                            | set(infra.get("docker_services") or [])
+                        ),
+                        "manifest_paths": sorted(
+                            set(store.metadata.get("manifest_paths") or [])
+                            | set(infra.get("manifest_paths") or [])
+                        ),
+                        "signals": sorted(
+                            set(store.metadata.get("signals") or []) | set(signals)
+                        ),
+                        "best_target": _prefer_best_target(
+                            store.metadata.get("best_target"),
+                            best_target,
+                        ),
+                    }
+                relation_type = RelationType.CONNECTS_TO
+                if kind in {"sql", "document", "nosql", "cache"}:
+                    relation_type = RelationType.READS_FROM
+                elif kind in {"queue"}:
+                    relation_type = RelationType.EMITS_TO
+                self.add_relation(
+                    source_id=component_id,
+                    target_id=store_id,
+                    relation_type=relation_type,
+                    rationale="Component-level infrastructure evidence shows a connection to this internal service.",
+                    evidence_ids=evidence_ids,
+                    qualifier=name,
+                    metadata={"signals": sorted(signals)},
+                    score=max(confidence_score, 0.62),
                 )
 
     def build(self) -> ProjectModel:
@@ -569,6 +786,21 @@ def _match_keyword(value: str, mapping: dict[str, tuple[str, str]]) -> Optional[
         if keyword in lower:
             return result
     return None
+
+
+def _prefer_best_target(existing: Optional[dict], candidate: Optional[dict]) -> Optional[dict]:
+    existing_target = dict(existing or {})
+    candidate_target = dict(candidate or {})
+    if not existing_target:
+        return candidate_target or None
+    if not candidate_target:
+        return existing_target
+
+    existing_rank = int(existing_target.get("target_rank") or 0)
+    candidate_rank = int(candidate_target.get("target_rank") or 0)
+    if candidate_rank > existing_rank:
+        return candidate_target
+    return existing_target
 
 
 def build_project_model_from_scan(

@@ -1,71 +1,91 @@
 # Chaos Twin
 
-**Understand your codebase. Simulate failures. Ship with confidence.**
+Understand your codebase, inspect request flows, and simulate failure impact locally.
 
-Chaos Twin is a local-first developer tool for codebase intelligence and failure impact analysis. Upload your codebase, analyze its architecture, and simulate what breaks when components fail.
+Chaos Twin is a local-first codebase intelligence workbench. You upload a repository archive, the backend produces deterministic scan artifacts, the frontend surfaces routes and architecture detail, and you can explore blast radius through graph-backed failure simulation.
 
-## Features
+## What It Does
 
-### 📊 **Codebase Analysis**
-- Upload ZIP archives of your projects
-- Automatic language, framework, and project type detection
-- Key file and entry point identification
-- Component classification (frontend, backend, services, etc.)
+- Detects languages, frameworks, entry points, components, routes, and infrastructure signals from an uploaded codebase.
+- Produces deterministic route-level request flow summaries directly on scan routes as `request_flow`.
+- Builds a canonical system model with stable IDs so downstream features can reuse consistent entities and relations.
+- Exposes project summary, insights, code-peek, graph, and simulation views from the latest scan.
+- Renders route details in the API Explorer with the direct request flow chain instead of requiring stored per-route analysis rows.
+- Keeps uploads, extracted workspaces, and local environment files on your machine.
 
-### 🗺️ **Architecture Visualization**
-- Auto-generate dependency graphs from scan data
-- Interactive graph with React Flow
-- Color-coded nodes by component type
-- Clear visualization of connections and dependencies
+## Current Feature Set
 
-### 💥 **Chaos Simulation**
-- Select any component and simulate its failure
-- Edge-type-aware impact propagation (uses, runs_on, contains, connects_to)
-- Severity assessment (Low/Medium/High Risk)
-- Plain-English blast radius summary
-- See exactly which components are affected and how many hops away
+### Analysis pipeline
+
+- ZIP upload and project-based scan workflow.
+- Deterministic scan enrichment for components, routes, infrastructure, and evidence.
+- Canonical model adapter in `backend/app/domain/system_model/` for stable project entities and relations.
+- On-demand system summary and insights derived from the latest scan artifacts.
+- Evidence-aware code peek for jumping from findings back to supporting files.
+
+### API and route exploration
+
+- Route extraction across common backend patterns.
+- Request flow extraction attached directly to each route as `request_flow`.
+- API Explorer route detail view in the frontend.
+- Fallback path that can derive route analysis from the scan route even when `route_analyses` rows are absent.
+
+### Graph and simulation
+
+- Graph generation from scan and canonical-backed artifacts.
+- Interactive graph UI with React Flow.
+- Failure simulation with graph edge semantics such as `uses`, `runs_on`, `contains`, and `connects_to`.
+- Summary of impacted components and blast radius from the selected failure point.
+
+### Validation tooling
+
+- Focused validators in `scripts/` for route extraction, route request flow, infrastructure detection, component detection, and evidence targeting.
+- Matrix evaluation script for running backend flow checks across multiple repository shapes.
 
 ## Tech Stack
 
-**Backend:**
-- FastAPI + SQLAlchemy + PostgreSQL
+### Backend
+
+- FastAPI
+- SQLAlchemy
+- PostgreSQL
 - Python 3.9+
-- Heuristic-based scanning and graph generation
+- `tree-sitter` and `tree-sitter-languages` for structured code parsing where needed
 
-**Frontend:**
-- React 19 + TypeScript
+### Frontend
+
+- React 19
+- TypeScript
 - Vite 7
-- @xyflow/react for graph visualization
-- Dark theme UI
+- `@xyflow/react`
 
-**Infrastructure:**
-- PostgreSQL 16 (Docker)
-- Local file storage for uploads and workspaces
+### Local infrastructure
 
-## Quick Start
+- Docker Compose for PostgreSQL
+- Local filesystem storage for uploaded archives and extracted workspaces
 
-1. **Start the database:** `docker compose up -d db`
-2. **Run the backend:** `cd backend && source .venv/bin/activate && uvicorn app.main:app --port 8000`
-3. **Run the frontend:** `cd frontend && npm run dev`
-4. **Open the app:** http://localhost:5173
+## Repository Layout
 
-## Setup Instructions
-
-### Project Structure
-```
+```text
 chaos-twin/
-├── backend/          # FastAPI application
+├── backend/
 │   ├── app/
-│   │   ├── models/      # SQLAlchemy models
-│   │   ├── routers/     # API endpoints
-│   │   ├── services/    # Business logic (scanner, graph builder, simulator)
-│   │   └── schemas/     # Pydantic schemas
-│   ├── uploads/         # Uploaded ZIP files (auto-created)
-│   └── workspaces/      # Extracted codebases (auto-created)
-├── frontend/         # React application
+│   │   ├── db/
+│   │   ├── domain/system_model/
+│   │   ├── routers/
+│   │   └── services/
+│   └── requirements.txt
+├── docs/
+├── frontend/
+│   ├── public/
+│   └── src/
+├── sample-projects/
+├── scripts/
 ├── docker-compose.yml
 └── README.md
 ```
+
+## Quick Start
 
 ### 1. Start PostgreSQL
 
@@ -75,93 +95,104 @@ From the repository root:
 docker compose up -d db
 ```
 
-The database will be available at `localhost:5432` with the default credentials.
-
-### 2. Run the Backend
-
-From the repository root:
+### 2. Start the backend
 
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # Optional: Edit if you need custom settings
 uvicorn app.main:app --reload --port 8000
 ```
 
-**Health checks:**
-- API: http://127.0.0.1:8000/health
-- Database: http://127.0.0.1:8000/health/db
-- API docs: http://127.0.0.1:8000/docs
+Backend endpoints:
 
-### 3. Run the Frontend
+- API docs: `http://127.0.0.1:8000/docs`
+- Health: `http://127.0.0.1:8000/health`
+- Database health: `http://127.0.0.1:8000/health/db`
 
-From the repository root:
+### 3. Start the frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env  # Optional: Edit if backend is not on default port
 npm run dev
 ```
 
-**Application:**
-- Frontend: http://localhost:5173
-- The app will connect to the backend at http://127.0.0.1:8000
+Frontend app:
+
+- `http://localhost:5173`
 
 ## Configuration
 
-### Backend Environment Variables (`backend/.env`)
+### Backend environment
+
+Local backend configuration lives in `backend/.env` when you need to override defaults.
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@localhost:5432/chaostwin` | PostgreSQL connection string |
-| `SQL_ECHO` | `false` | Enable SQLAlchemy query logging |
+| `SQL_ECHO` | `false` | Enable SQLAlchemy SQL logging |
 | `UPLOAD_DIR` | `uploads` | Directory for uploaded ZIP files |
-| `WORKSPACE_DIR` | `workspaces` | Directory for extracted codebases |
+| `WORKSPACE_DIR` | `workspaces` | Directory for extracted repositories |
 
-### Frontend Environment Variables (`frontend/.env`)
+### Frontend environment
+
+The frontend reads `frontend/.env` for local overrides.
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_API_BASE_URL` | `http://127.0.0.1:8000` | Backend API URL |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | `http://127.0.0.1:8000` | Backend base URL |
 
-## How It Works
+An example file is provided at `frontend/.env.example`.
 
-1. **Create a project** — Define a logical project container
-2. **Upload a codebase** — ZIP your source code and upload it
-3. **Run analysis** — Automatic detection of languages, frameworks, components, and entry points
-4. **Build the graph** — Generate a visual architecture map with dependencies
-5. **Simulate failures** — Pick any component and see what breaks when it fails
+## Local Data and Safety
 
-The simulation engine uses edge-type-aware traversal:
-- `runs_on` edges propagate failures from runtimes to apps
-- `uses` edges propagate from dependencies to consumers
-- `contains` edges propagate bidirectionally between parents and children
-- `connects_to` edges propagate in both directions for network links
+- `backend/.env` is local-only and ignored by git.
+- `backend/uploads/` and `backend/workspaces/` are generated locally and ignored by git.
+- Frontend build output and `node_modules/` are ignored.
+- Sample archives under `sample-projects/` are intentionally kept; other ZIP outputs are ignored.
 
-## Development Notes
+This repository is designed to keep analysis artifacts local unless you explicitly export or commit them.
 
-- **Local-first:** All data stays on your machine. No cloud, no telemetry.
-- **Heuristic-based:** Analysis uses pattern matching and file structure detection, not deep AST parsing.
-- **Beginner-friendly:** Simple, readable code with clear separation of concerns.
-- **Incremental:** Features built step-by-step with minimal complexity.
+## Development Workflow
 
-### Database Schema
+### Run the app locally
 
-- `projects` — Project metadata
-- `uploads` — Uploaded ZIP files
-- `scans` — Scan results with detected languages, frameworks, components
-- `graph_nodes` — Architecture graph nodes (components, runtimes, tools)
-- `graph_edges` — Connections between nodes (uses, runs_on, contains, connects_to)
-- `simulation_runs` — Failure simulation results with impact analysis
+1. Start Postgres with Docker Compose.
+2. Run the FastAPI backend.
+3. Run the Vite frontend.
+4. Create a project, upload a ZIP, and trigger analysis.
 
-### Key Services
+### Run validation scripts
 
-- **Scanner** (`app/services/scanner.py`) — Analyzes uploaded codebases
-- **Graph Builder** (`app/services/graph_builder.py`) — Generates architecture graphs from scan data
-- **Simulator** (`app/services/simulator.py`) — Runs failure simulations with BFS traversal
+From the repository root, after the backend environment is active:
+
+```bash
+python scripts/validate_route_extraction.py
+python scripts/validate_route_flow_extraction.py
+python scripts/validate_infrastructure_detection.py
+python scripts/validate_component_detection.py
+python scripts/validate_evidence_target_selection.py
+python scripts/validate_route_api_explorer.py
+python scripts/evaluate_backend_matrix.py
+```
+
+Use the validators selectively when you touch only one subsystem.
+
+## Implementation Notes
+
+- The canonical backend model is dataclass-based and dependency-light.
+- Stable IDs are reused or derived deterministically from canonical attributes.
+- Infrastructure detection is additive: it enriches scan data rather than introducing dedicated scan columns.
+- Route request flow extraction is intentionally conservative and avoids weak data-access guesses.
+- Summary and insights are currently on-demand views over the latest scan artifacts rather than separately persisted documents.
+
+## Known Limitations
+
+- Sparse repositories can still produce an empty graph, which means simulation may be unavailable.
+- Some degraded fallback paths produce lower-confidence summaries than canonical-backed scans.
+- Route extraction has been hardened for more frameworks, but it remains heuristic and should be validated against unfamiliar repo layouts.
 
 ## License
 
