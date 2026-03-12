@@ -18,6 +18,7 @@ import SequenceDiagram from "../SequenceDiagram";
 import ModeToggle from "./ModeToggle";
 import PhaseCard from "./PhaseCard";
 import ErrorPathsSection from "./ErrorPathsSection";
+import InlineCodePeek, { type InlineCodePeekAnchor } from "./InlineCodePeek";
 import {
   analyzeRoute,
   fetchRouteDetail,
@@ -195,10 +196,23 @@ function stageTone(stage: RequestFlowStage): string {
   return "default";
 }
 
-function RequestFlowStageCard({ stage, index }: { stage: RequestFlowStage; index: number }) {
+function requestFlowStageAnchor(stage: RequestFlowStage): InlineCodePeekAnchor | null {
+  const primary = stage.code_anchor ?? stage.evidence ?? null;
+  return {
+    file_path: stage.file_path ?? primary?.file_path ?? null,
+    symbol_name: stage.symbol_name ?? primary?.symbol_name ?? null,
+    class_name: stage.class_name ?? primary?.class_name ?? null,
+    line_start: stage.line_start ?? primary?.line_start ?? null,
+    line_end: stage.line_end ?? primary?.line_end ?? null,
+    selection_reason: stage.selection_reason ?? primary?.selection_reason ?? null,
+  };
+}
+
+function RequestFlowStageCard({ stage, index, projectId }: { stage: RequestFlowStage; index: number; projectId: string }) {
   const stageStyle = STAGE_STYLES[stage.stage_type] ?? { icon: ArrowRight, accent: "#6b7280", label: stage.stage_type.replace(/_/g, " ") };
   const StageIcon = stageStyle.icon;
   const anchor = formatStageAnchor(stage);
+  const codePeekAnchor = requestFlowStageAnchor(stage);
   const hints = stage.hints?.filter(Boolean) ?? [];
   const showReason = Boolean(stage.selection_reason) && (stage.is_inferred || (stage.confidence ?? 1) < 0.75);
 
@@ -237,6 +251,17 @@ function RequestFlowStageCard({ stage, index }: { stage: RequestFlowStage; index
         )}
 
         {showReason && <p className="rj-stage-reason">{stage.selection_reason}</p>}
+
+        <InlineCodePeek
+          projectId={projectId}
+          anchor={codePeekAnchor}
+          isInferred={Boolean(stage.is_inferred)}
+          confidence={stage.confidence}
+          sourceLabel={stageStyle.label}
+          unavailableReason={stage.is_inferred
+            ? "This inferred step has no grounded file anchor for Code Peek."
+            : "No grounded file anchor was detected for this step."}
+        />
       </div>
     </article>
   );
@@ -570,6 +595,7 @@ export default function RequestJourney({
                           key={`${stage.step ?? index}:${stage.stage_type}:${stage.label}`}
                           stage={stage}
                           index={index}
+                          projectId={projectId}
                         />
                       ))}
                     </div>
@@ -665,15 +691,18 @@ export default function RequestJourney({
           )}
           {visibleSeq && (
             <div className="api-seq-inline">
-              <SequenceDiagram data={visibleSeq} />
-              <button
-                className="btn btn-secondary btn-sm"
-                style={{ marginTop: 8 }}
-                disabled={generating}
-                onClick={handleGenerateSeq}
-              >
-                {generating ? "Regenerating…" : "Regenerate"}
-              </button>
+              <SequenceDiagram
+                data={visibleSeq}
+                actions={(
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={generating}
+                    onClick={handleGenerateSeq}
+                  >
+                    {generating ? "Regenerating…" : "Regenerate"}
+                  </button>
+                )}
+              />
             </div>
           )}
         </div>

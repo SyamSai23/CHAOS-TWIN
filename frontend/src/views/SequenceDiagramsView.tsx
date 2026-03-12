@@ -139,6 +139,14 @@ export default function SequenceDiagramsView({ projectId, refreshKey }: Props) {
                   <span className="seq-route-path">{path}</span>
                 </div>
                 <div className="seq-route-card-meta">
+                  <span className={`chip ${d.metadata?.degraded ? "chip-warn" : "chip-muted"}`}>
+                    {d.metadata?.sequence_source === "request_flow" ? "request_flow" : d.metadata?.sequence_source ?? "sequence"}
+                  </span>
+                  {typeof d.metadata?.request_flow_stage_count === "number" && (
+                    <span className="chip chip-muted">
+                      {d.metadata.request_flow_stage_count} stages
+                    </span>
+                  )}
                   <span className="chip chip-muted">
                     {d.participants?.length ?? 0} participants
                   </span>

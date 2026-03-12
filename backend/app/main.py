@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.schema import initialize_schema
@@ -15,6 +17,25 @@ from app.routers import projects, uploads, scans, graphs, simulations, briefs, d
 
 app = FastAPI(title="Chaos Twin API")
 
+
+def _allowed_origins() -> list[str]:
+    configured = os.getenv("CHAOS_TWIN_CORS_ORIGINS", "")
+    extra = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    defaults = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for origin in [*defaults, *extra]:
+        if origin in seen:
+            continue
+        seen.add(origin)
+        ordered.append(origin)
+    return ordered
+
 app.include_router(projects.router)
 app.include_router(uploads.router)
 app.include_router(scans.router)
@@ -31,10 +52,7 @@ app.include_router(code_peek.router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
