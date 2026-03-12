@@ -13,6 +13,7 @@ import type {
   ScanResult,
   SimulationResult,
 } from "../types";
+import PageHeader from "../components/PageHeader";
 import { shortenLabel } from "../types";
 
 /* ── Node color palette ── */
@@ -265,9 +266,13 @@ export default function ArchitectureView({
 }: ArchitectureViewProps) {
   if (!graph) {
     return (
-      <div>
-        <h1 className="view-title">Architecture</h1>
-        <div className="view-empty">
+      <div className="page-shell">
+        <PageHeader
+          eyebrow="System Graph"
+          title="Architecture"
+          description="Build and inspect the canonical graph that powers deep dive and simulation surfaces."
+        />
+        <div className="view-empty surface-panel">
           <p className="view-empty-title">No graph built yet</p>
           <p className="view-empty-sub">
             Run a scan first, then build the architecture graph.
@@ -312,10 +317,20 @@ export default function ArchitectureView({
   );
 
   return (
-    <div>
-      <h1 className="view-title">Architecture</h1>
+    <div className="page-shell">
+      <PageHeader
+        eyebrow="System Graph"
+        title="Architecture"
+        description="Canonical graph view with component relationships, node inventory, and deep-dive entry points."
+        meta={(
+          <>
+            <span className="chip chip-muted">{graph.node_count} nodes</span>
+            <span className="chip chip-muted">{graph.edge_count} connections</span>
+            {scan ? <span className="chip chip-muted">{scan.components.length} components</span> : null}
+          </>
+        )}
+      />
 
-      {/* Stats badges */}
       <div className="graph-stats">
         <span className="chip">
           {graph.node_count} {graph.node_count === 1 ? "node" : "nodes"}
@@ -334,7 +349,6 @@ export default function ArchitectureView({
         </button>
       </div>
 
-      {/* Graph canvas */}
       <div className="graph-full">
         <ReactFlow
           nodes={flowGraph.nodes}
@@ -365,7 +379,6 @@ export default function ArchitectureView({
         </ReactFlow>
       </div>
 
-      {/* Component chips — click to deep-dive */}
       {scan?.components && scan.components.length > 0 && (
         <div className="arch-section">
           <div className="card-label">Components — click to deep-dive</div>
@@ -393,7 +406,6 @@ export default function ArchitectureView({
         </div>
       )}
 
-      {/* All nodes */}
       {graph.nodes.length > 0 && (
         <div className="arch-section">
           <div className="card-label">All Nodes</div>
@@ -408,7 +420,6 @@ export default function ArchitectureView({
         </div>
       )}
 
-      {/* Connections */}
       {graph.edges.length > 0 && (
         <div className="arch-section">
           <div className="card-label">Connections</div>

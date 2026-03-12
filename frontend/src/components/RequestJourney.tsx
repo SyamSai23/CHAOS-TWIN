@@ -111,6 +111,13 @@ function formatConfidence(value: number | null | undefined): string {
   return value.toFixed(2);
 }
 
+function formatConfidencePercent(value: number | null | undefined): string {
+  if (typeof value !== "number") {
+    return "n/a";
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
 function formatOwner(detail: RouteDetail | null, analysis: RouteAnalysis | null, route: RouteItem): string {
   const controller = detail?.controller_name ?? route.controller_name;
   const handler = detail?.handler_function ?? analysis?.handler_function ?? route.handler_function;
@@ -196,6 +203,62 @@ function stageTone(stage: RequestFlowStage): string {
   return "default";
 }
 
+function flowSignalSummary(flow: RequestFlow | null) {
+  if (!flow) {
+    return {
+      directSteps: 0,
+      inferredSteps: 0,
+      externalSteps: 0,
+      dataSteps: 0,
+      guardSteps: 0,
+    };
+  }
+
+  return flow.stages.reduce(
+    (summary, stage) => {
+      if (stage.is_inferred) {
+        summary.inferredSteps += 1;
+      } else {
+        summary.directSteps += 1;
+      }
+      if (stage.stage_type === "external") {
+        summary.externalSteps += 1;
+      }
+      if (stage.stage_type === "repository" || stage.stage_type === "data_access") {
+        summary.dataSteps += 1;
+      }
+      if (stage.stage_type === "auth" || stage.stage_type === "validation") {
+        summary.guardSteps += 1;
+      }
+      return summary;
+    },
+    {
+      directSteps: 0,
+      inferredSteps: 0,
+      externalSteps: 0,
+      dataSteps: 0,
+      guardSteps: 0,
+    },
+  );
+}
+
+function requestFlowHighlights(flow: RequestFlow | null, analysis: RouteAnalysis | null): string[] {
+  const highlights: string[] = [];
+  if (flow?.summary && typeof flow.summary === "object") {
+    if (flow.summary.has_auth) highlights.push("Auth checks");
+    if (flow.summary.has_validation) highlights.push("Validation");
+    if (flow.summary.has_service) highlights.push("Service layer");
+    if (flow.summary.has_repository || flow.summary.has_data_access) highlights.push("Data access");
+    if (flow.summary.has_external) highlights.push("External calls");
+  }
+  if (highlights.length === 0 && analysis) {
+    if (analysis.has_database) highlights.push("Database touchpoints");
+    if (analysis.has_external) highlights.push("External calls");
+    if (analysis.has_filesystem) highlights.push("Filesystem activity");
+  }
+  return highlights;
+}
+
 function requestFlowStageAnchor(stage: RequestFlowStage): InlineCodePeekAnchor | null {
   const primary = stage.code_anchor ?? stage.evidence ?? null;
   return {
@@ -223,6 +286,7 @@ function RequestFlowStageCard({ stage, index, projectId }: { stage: RequestFlowS
         <span className="rj-stage-icon" style={{ color: stageStyle.accent, borderColor: `${stageStyle.accent}33` }}>
           <StageIcon size={14} />
         </span>
+        <span className="rj-stage-connector" />
       </div>
 
       <div className="rj-stage-content">
@@ -239,6 +303,12 @@ function RequestFlowStageCard({ stage, index, projectId }: { stage: RequestFlowS
         <h3 className="rj-stage-title">{stage.label}</h3>
 
         {anchor && <p className="rj-stage-anchor">{anchor}</p>}
+
+        <div className="rj-stage-meta-row">
+          {stage.provenance ? <span className="rj-stage-meta-chip">{stage.provenance.replace(/_/g, " ")}</span> : null}
+          {stage.anchor_kind ? <span className="rj-stage-meta-chip">{stage.anchor_kind.replace(/_/g, " ")}</span> : null}
+          {typeof stage.target_rank === "number" ? <span className="rj-stage-meta-chip">rank {stage.target_rank}</span> : null}
+        </div>
 
         {hints.length > 0 && (
           <div className="rj-stage-hints">
@@ -316,6 +386,18 @@ function buildAnalysisTags(analysis: RouteAnalysis) {
   return tags;
 }
 
+function shouldSkipLegacyAnalysis(detail: RouteDetail, route: RouteItem): boolean {
+  if (detail.route_analysis || detail.request_flow?.stages?.length) {
+    return false;
+  }
+
+  if (detail.analysis_source === "none" && route.request_flow_summary?.has_request_flow === false) {
+    return true;
+  }
+
+  return false;
+}
+
 type Props = {
   route: RouteItem;
   projectId: string;
@@ -375,6 +457,11 @@ export default function RequestJourney({
         if (detail.route_analysis) {
           setAnalysis(detail.route_analysis);
           setAnalysisCache((prev) => ({ ...prev, [route.id]: detail.route_analysis as RouteAnalysis }));
+          return;
+        }
+
+        if (shouldSkipLegacyAnalysis(detail, route)) {
+          setAnalysis(null);
           return;
         }
       } catch {
@@ -476,65 +563,62 @@ export default function RequestJourney({
   const flowConfidence = routeDetail?.request_flow?.confidence ?? route.request_flow_summary?.confidence ?? null;
   const activeFile = routeDetail?.file || route.file;
   const activeComponent = routeDetail?.component || route.component;
+  const flowSignals = flowSignalSummary(activeRequestFlow);
+  const inferredWarning = flowSignals.inferredSteps > 0;
+  const journeyHighlights = requestFlowHighlights(activeRequestFlow, analysis);
+  const trustTone = hasFallbackFlow ? "fallback" : inferredWarning || (typeof flowConfidence === "number" && flowConfidence < 0.75) ? "caution" : "grounded";
+  const detailState = routeDetail ? "Route detail loaded" : analysis ? "Compatibility analysis loaded" : "Loading route detail";
+  const detailStateTone = routeDetail ? "grounded" : analysis ? "fallback" : "neutral";
+  const sequenceStatus = visibleSeq ? "Sequence available" : route.has_sequence ? "Sequence stored" : "No sequence yet";
 
   /* ── Render ── */
 
   return (
     <div className="request-journey">
-      {/* Header card */}
       <div className="rj-header-card">
         <div className="rj-header-top">
-          <div className="rj-route-info">
-            <span className="api-detail-method" style={{ background: methodColor }}>
-              {route.method}
-            </span>
-            <span className="api-detail-path">{route.path}</span>
+          <div className="rj-hero-copy">
+            <div className="rj-route-info">
+              <span className="api-detail-method" style={{ background: methodColor }}>
+                {route.method}
+              </span>
+              <span className="api-detail-path">{route.path}</span>
+            </div>
+            <p className="rj-route-description">{routeSummary}</p>
+            <div className="rj-hero-meta">
+              <span className={`rj-trust-pill is-${trustTone}`}>{flowSource}</span>
+              <span className={`rj-trust-pill is-${detailStateTone}`}>{detailState}</span>
+              <span className="rj-trust-pill is-neutral">{sequenceStatus}</span>
+              {routeOwner !== "unknown" ? <span className="rj-trust-pill is-neutral">{routeOwner}</span> : null}
+            </div>
           </div>
           <ModeToggle mode={mode} onChange={setMode} />
         </div>
 
-        <div className="api-detail-divider" />
-
-        <div className="api-detail-grid">
-          <div className="api-detail-row">
-            <span className="api-detail-label">SOURCE</span>
-            <span className="api-detail-value">{flowSource}</span>
+        <div className="rj-hero-grid">
+          <div className="rj-hero-stat-card">
+            <span className="rj-overview-label">Flow confidence</span>
+            <span className="rj-hero-stat-value">{formatConfidencePercent(flowConfidence)}</span>
+            <span className="rj-hero-stat-sub">{hasFallbackFlow ? "Compatibility backed" : "Request-flow backed"}</span>
           </div>
-          <div className="api-detail-row">
-            <span className="api-detail-label">OWNER</span>
-            <span className="api-detail-value api-detail-mono">{routeOwner}</span>
+          <div className="rj-hero-stat-card">
+            <span className="rj-overview-label">Grounded steps</span>
+            <span className="rj-hero-stat-value">{flowSignals.directSteps}</span>
+            <span className="rj-hero-stat-sub">{flowSignals.inferredSteps} inferred</span>
           </div>
-          <div className="api-detail-row">
-            <span className="api-detail-label">COMPONENT</span>
-            <span className="api-detail-value">{activeComponent || "unknown"}</span>
+          <div className="rj-hero-stat-card">
+            <span className="rj-overview-label">Route owner</span>
+            <span className="rj-hero-stat-value rj-hero-stat-value-code">{routeOwner}</span>
+            <span className="rj-hero-stat-sub">{activeComponent || "unknown component"}</span>
           </div>
-          <div className="api-detail-row">
-            <span className="api-detail-label">FILE</span>
-            <span className="api-detail-value api-detail-mono">{activeFile}</span>
+          <div className="rj-hero-stat-card">
+            <span className="rj-overview-label">Code anchor</span>
+            <span className="rj-hero-stat-value rj-hero-stat-value-code">{formatAnchor(routeDetail, route)}</span>
+            <span className="rj-hero-stat-sub">{activeFile}</span>
           </div>
-          <div className="api-detail-row">
-            <span className="api-detail-label">FLOW STAGES</span>
-            <span className="api-detail-value">{flowStageCount || 0}</span>
-          </div>
-          <div className="api-detail-row">
-            <span className="api-detail-label">CODE ANCHOR</span>
-            <span className="api-detail-value api-detail-mono">{formatAnchor(routeDetail, route)}</span>
-          </div>
-          {mode === "technical" && analysis && (
-            <div className="api-detail-row">
-              <span className="api-detail-label">COMPLEXITY</span>
-              <span
-                className="complexity-badge"
-                style={{ color: COMPLEXITY_COLORS[analysis.complexity] }}
-              >
-                {analysis.complexity}
-              </span>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* ── Story Mode ── */}
       {mode === "story" && (
         <div className="rj-story">
           {analysisLoading && (
@@ -557,8 +641,6 @@ export default function RequestJourney({
 
           {(routeDetail || analysis) && !analysisLoading && (
             <>
-              <p className="rj-route-description">{routeSummary}</p>
-
               {flowStatus && (
                 <div className={`rj-flow-banner rj-flow-banner-${flowStatus.tone}`}>
                   <AlertCircle size={14} />
@@ -566,96 +648,152 @@ export default function RequestJourney({
                 </div>
               )}
 
-              <div className="rj-analysis-overview">
-                <div className="rj-overview-card">
-                  <span className="rj-overview-label">STAGES</span>
-                  <span className="rj-overview-value">{flowStageCount || 0}</span>
-                </div>
-                <div className="rj-overview-card">
-                  <span className="rj-overview-label">FLOW CONFIDENCE</span>
-                  <span className="rj-overview-value">{flowConfidence ?? "n/a"}</span>
-                </div>
-                <div className="rj-overview-card">
-                  <span className="rj-overview-label">FLOW SOURCE</span>
-                  <span className="rj-overview-value">{flowSource}</span>
-                </div>
-                <div className="rj-overview-card">
-                  <span className="rj-overview-label">PARTICIPANTS</span>
-                  <span className="rj-overview-value">{analysis ? summarizeParticipants(analysis.participants) : routeOwner}</span>
-                </div>
-              </div>
-
-              {hasRequestFlow && activeRequestFlow ? (
-                <div className="rj-journey-shell">
-                  <div className="rj-phases">
-                    <span className="rj-phases-label">REQUEST FLOW</span>
-                    <div className="rj-stage-list">
-                      {activeRequestFlow.stages.map((stage, index) => (
-                        <RequestFlowStageCard
-                          key={`${stage.step ?? index}:${stage.stage_type}:${stage.label}`}
-                          stage={stage}
-                          index={index}
-                          projectId={projectId}
-                        />
-                      ))}
+              <div className="rj-story-layout">
+                <div className="rj-story-main">
+                  <div className="rj-analysis-overview">
+                    <div className="rj-overview-card">
+                      <span className="rj-overview-label">Journey stages</span>
+                      <span className="rj-overview-value">{flowStageCount || 0}</span>
+                    </div>
+                    <div className="rj-overview-card">
+                      <span className="rj-overview-label">Participants</span>
+                      <span className="rj-overview-value">{analysis ? summarizeParticipants(analysis.participants) : routeOwner}</span>
+                    </div>
+                    <div className="rj-overview-card">
+                      <span className="rj-overview-label">Guards and validation</span>
+                      <span className="rj-overview-value">{flowSignals.guardSteps || 0}</span>
+                    </div>
+                    <div className="rj-overview-card">
+                      <span className="rj-overview-label">Data or external</span>
+                      <span className="rj-overview-value">{flowSignals.dataSteps + flowSignals.externalSteps}</span>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="rj-phases">
-                  <span className="rj-phases-label">COMPATIBILITY JOURNEY</span>
-                  {displayPhases.length > 0 ? (
-                    displayPhases.map((phase, i) => (
-                      <PhaseCard
-                        key={`${phase.phase_id}-${i}`}
-                        phase={{ ...phase, name: analysis ? phaseLabel(analysis, phase.phase_id) : humanizePhaseName(phase.phase_id, phase.name) }}
-                        index={i}
-                        mode="story"
-                      />
-                    ))
+
+                  {hasRequestFlow && activeRequestFlow ? (
+                    <div className="rj-journey-shell">
+                      <div className="rj-section-header">
+                        <div>
+                          <span className="rj-phases-label">Request journey</span>
+                          <h3 className="rj-section-title">Grounded route flow</h3>
+                        </div>
+                        {inferredWarning ? <span className="rj-inline-warning">{flowSignals.inferredSteps} inferred steps</span> : <span className="rj-inline-grounded">Directly grounded</span>}
+                      </div>
+                      <div className="rj-stage-list">
+                        {activeRequestFlow.stages.map((stage, index) => (
+                          <RequestFlowStageCard
+                            key={`${stage.step ?? index}:${stage.stage_type}:${stage.label}`}
+                            stage={stage}
+                            index={index}
+                            projectId={projectId}
+                          />
+                        ))}
+                      </div>
+                    </div>
                   ) : (
-                    <p className="text-muted" style={{ fontSize: 13 }}>
-                      No phases detected — handler may be too simple to decompose.
-                    </p>
+                    <div className="rj-phases">
+                      <div className="rj-section-header">
+                        <div>
+                          <span className="rj-phases-label">Compatibility journey</span>
+                          <h3 className="rj-section-title">Fallback route breakdown</h3>
+                        </div>
+                        <span className="rj-inline-warning">Fallback backed</span>
+                      </div>
+                      {displayPhases.length > 0 ? (
+                        displayPhases.map((phase, i) => (
+                          <PhaseCard
+                            key={`${phase.phase_id}-${i}`}
+                            phase={{ ...phase, name: analysis ? phaseLabel(analysis, phase.phase_id) : humanizePhaseName(phase.phase_id, phase.name) }}
+                            index={i}
+                            mode="story"
+                          />
+                        ))
+                      ) : (
+                        <p className="text-muted" style={{ fontSize: 13 }}>
+                          No phases detected. The handler may be too small or too weakly grounded to decompose further.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {analysis && analysis.error_paths.length > 0 && (
+                    <ErrorPathsSection errorPaths={analysis.error_paths} />
                   )}
                 </div>
-              )}
 
-              {analysis && analysis.parameters.length > 0 && (
-                <div className="params-section">
-                  <span className="params-label">Parameters</span>
-                  <div className="params-list">
-                    {analysis.parameters.map((parameter) => (
-                      <div key={`${parameter.name}:${parameter.source}`} className="params-item">
-                        <span className="params-name">{parameter.name}</span>
-                        <span className="params-type">{parameter.type || "unknown"}</span>
-                        <span className="params-source">{parameter.source}</span>
+                <div className="rj-story-side">
+                  <div className="rj-side-card">
+                    <span className="rj-phases-label">Route profile</span>
+                    <div className="rj-side-kv-list">
+                      <div className="rj-side-kv-row">
+                        <span>Owner</span>
+                        <span>{routeOwner}</span>
                       </div>
-                    ))}
+                      <div className="rj-side-kv-row">
+                        <span>Component</span>
+                        <span>{activeComponent || "unknown"}</span>
+                      </div>
+                      <div className="rj-side-kv-row">
+                        <span>Confidence</span>
+                        <span>{formatConfidencePercent(flowConfidence)}</span>
+                      </div>
+                      <div className="rj-side-kv-row">
+                        <span>Detail source</span>
+                        <span>{flowSource}</span>
+                      </div>
+                      {analysis ? (
+                        <div className="rj-side-kv-row">
+                          <span>Complexity</span>
+                          <span className="complexity-badge" style={{ color: COMPLEXITY_COLORS[analysis.complexity] }}>{analysis.complexity}</span>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              )}
 
-              {analysisTags.length > 0 && (
-                <div className="rj-tags">
-                  {analysisTags.map((tag) => (
-                    <span key={tag.label} className={`rj-tag ${tag.className}`}>
-                      {tag.label}
-                    </span>
-                  ))}
-                </div>
-              )}
+                  {journeyHighlights.length > 0 && (
+                    <div className="rj-side-card">
+                      <span className="rj-phases-label">Journey signals</span>
+                      <div className="rj-highlight-list">
+                        {journeyHighlights.map((highlight) => (
+                          <span key={highlight} className="rj-highlight-chip">{highlight}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {/* Error paths */}
-              {analysis && analysis.error_paths.length > 0 && (
-                <ErrorPathsSection errorPaths={analysis.error_paths} />
-              )}
+                  {analysis && analysis.parameters.length > 0 && (
+                    <div className="params-section rj-side-card">
+                      <span className="params-label">Parameters</span>
+                      <div className="params-list">
+                        {analysis.parameters.map((parameter) => (
+                          <div key={`${parameter.name}:${parameter.source}`} className="params-item">
+                            <span className="params-name">{parameter.name}</span>
+                            <span className="params-type">{parameter.type || "unknown"}</span>
+                            <span className="params-source">{parameter.source}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {analysisTags.length > 0 && (
+                    <div className="rj-side-card">
+                      <span className="rj-phases-label">Touchpoints</span>
+                      <div className="rj-tags">
+                        {analysisTags.map((tag) => (
+                          <span key={tag.label} className={`rj-tag ${tag.className}`}>
+                            {tag.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </>
           )}
         </div>
       )}
 
-      {/* ── Sequence Mode ── */}
       {mode === "technical" && (
         <div className="rj-technical">
           {sequenceIsStale && (

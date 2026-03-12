@@ -75,6 +75,7 @@ function App() {
     statusDotClass,
     toggleDeepDiveEdges,
   } = useChaosTwinApp();
+  const activeNavItem = NAV_ITEMS.find((item) => item.key === activeView);
 
   /* ── Render active view ── */
 
@@ -166,29 +167,43 @@ function App() {
 
   return (
     <div className="layout">
-      {/* ── Topbar ── */}
       <header className="topbar">
         <div className="topbar-left">
-          <Zap size={18} color="#f97316" />
-          <span className="topbar-title">Chaos Twin</span>
+          <div className="topbar-mark">
+            <Zap size={18} />
+          </div>
+          <div className="topbar-brand-copy">
+            <span className="topbar-kicker">Intelligence Workspace</span>
+            <span className="topbar-title">Chaos Twin</span>
+          </div>
         </div>
         <div className="topbar-right">
-          <div className="topbar-status">
-            <span className={`topbar-dot ${statusDotClass(apiStatus)}`} title={`API: ${apiStatus}`} />
-            <span className={`topbar-dot ${statusDotClass(dbStatus)}`} title={`DB: ${dbStatus}`} />
+          <div className="topbar-status-rail">
+            <div className={`topbar-status-pill is-${statusDotClass(apiStatus)}`} title={`API: ${apiStatus}`}>
+              <span className={`topbar-dot ${statusDotClass(apiStatus)}`} />
+              <span>API {apiStatus}</span>
+            </div>
+            <div className={`topbar-status-pill is-${statusDotClass(dbStatus)}`} title={`DB: ${dbStatus}`}>
+              <span className={`topbar-dot ${statusDotClass(dbStatus)}`} />
+              <span>DB {dbStatus}</span>
+            </div>
           </div>
           {selectedProject && (
-            <span className="topbar-breadcrumb">{selectedProject.name}</span>
+            <div className="topbar-project-pill">
+              <span className="topbar-project-context">{activeNavItem?.label ?? "Workspace"}</span>
+              <span className="topbar-project-name">{selectedProject.name}</span>
+            </div>
           )}
         </div>
       </header>
 
       <div className="layout-body">
-        {/* ── Sidebar ── */}
         <aside className="sidebar">
-          {/* Section 1: Projects */}
           <div className="sidebar-section">
-            <div className="sidebar-label">Your Projects</div>
+            <div className="sidebar-section-head">
+              <div className="sidebar-label">Workspace</div>
+              <span className="chip chip-muted">{projects.length} projects</span>
+            </div>
             <div className="sidebar-project-list">
               {projects.map((p) => (
                 <button
@@ -259,9 +274,11 @@ function App() {
             )}
           </div>
 
-          {/* Section 2: Navigation */}
           {selectedProjectId && (
             <div className="sidebar-section sidebar-nav">
+              <div className="sidebar-section-head">
+                <div className="sidebar-label">Navigation</div>
+              </div>
               {NAV_ITEMS.map((item) => (
                 <button
                   key={item.key}
@@ -275,9 +292,11 @@ function App() {
             </div>
           )}
 
-          {/* Section 3: Actions */}
           {selectedProjectId && (
             <div className="sidebar-section sidebar-actions">
+              <div className="sidebar-section-head">
+                <div className="sidebar-label">Project Actions</div>
+              </div>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -328,8 +347,9 @@ function App() {
           )}
         </aside>
 
-        {/* ── Main Canvas ── */}
-        <main className="main-canvas">{renderView()}</main>
+        <main className="main-canvas">
+          <div className="main-canvas-inner">{renderView()}</div>
+        </main>
       </div>
     </div>
   );

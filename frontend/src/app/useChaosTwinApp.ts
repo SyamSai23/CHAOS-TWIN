@@ -20,6 +20,7 @@ import {
   fetchComponentDeepDive,
   fetchDbHealth,
   fetchHealth,
+  fetchLatestProjectScan,
   generateProjectGraph,
   listProjects,
   runProjectScan,
@@ -86,6 +87,30 @@ export function useChaosTwinApp() {
       setSelectedProjectId(projects.length > 0 ? projects[0].id : null);
     }
   }, [projects, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId || selectedProjectId in scans) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetchLatestProjectScan(selectedProjectId)
+      .then((data) => {
+        if (!cancelled) {
+          setScans((prev) => ({ ...prev, [selectedProjectId]: data }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setScans((prev) => ({ ...prev, [selectedProjectId]: null }));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scans, selectedProjectId]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
 

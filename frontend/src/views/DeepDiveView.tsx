@@ -7,6 +7,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { ScanResult, DeepDiveResult } from "../types";
+import PageHeader from "../components/PageHeader";
 import { shortenLabel } from "../types";
 
 const roleColor = (role: string): string => {
@@ -67,9 +68,13 @@ export default function DeepDiveView({
 
   if (!scan || deepDiveComponents.length === 0) {
     return (
-      <div>
-        <h1 className="view-title">Deep Dive</h1>
-        <div className="view-empty">
+      <div className="page-shell">
+        <PageHeader
+          eyebrow="Component Analysis"
+          title="Deep Dive"
+          description="Inspect a single component’s internal modules, likely flow, and structural relationships."
+        />
+        <div className="view-empty surface-panel">
           <p className="view-empty-title">No components available</p>
           <p className="view-empty-sub">
             Run a scan first to discover components.
@@ -80,10 +85,19 @@ export default function DeepDiveView({
   }
 
   return (
-    <div>
-      <h1 className="view-title">Deep Dive</h1>
+    <div className="page-shell">
+      <PageHeader
+        eyebrow="Component Analysis"
+        title="Deep Dive"
+        description="Focus a single component, inspect its module structure, and trace its likely internal execution flow."
+        meta={(
+          <>
+            <span className="chip chip-muted">{deepDiveComponents.length} dive-ready components</span>
+            {ddResult ? <span className="chip chip-muted">{ddResult.internal_modules.length} modules mapped</span> : null}
+          </>
+        )}
+      />
 
-      {/* Component selector */}
       <div style={{ marginBottom: 16 }}>
         <div className="card-label">Select a component</div>
         <div className="chip-list" style={{ marginTop: 6 }}>

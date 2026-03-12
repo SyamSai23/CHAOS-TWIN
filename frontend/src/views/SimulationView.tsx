@@ -1,4 +1,5 @@
 import type { GraphResponse, SimulationResult } from "../types";
+import PageHeader from "../components/PageHeader";
 import { shortenLabel } from "../types";
 
 interface SimulationViewProps {
@@ -24,9 +25,13 @@ export default function SimulationView({
 }: SimulationViewProps) {
   if (!graph) {
     return (
-      <div>
-        <h1 className="view-title">Chaos Simulation</h1>
-        <div className="view-empty">
+      <div className="page-shell">
+        <PageHeader
+          eyebrow="Impact Modeling"
+          title="Chaos Simulation"
+          description="Run targeted failure simulations against the current graph to inspect blast radius and severity."
+        />
+        <div className="view-empty surface-panel">
           <p className="view-empty-title">No graph available</p>
           <p className="view-empty-sub">
             Build the architecture graph first, then run a simulation.
@@ -37,8 +42,18 @@ export default function SimulationView({
   }
 
   return (
-    <div>
-      <h1 className="view-title">Chaos Simulation</h1>
+    <div className="page-shell">
+      <PageHeader
+        eyebrow="Impact Modeling"
+        title="Chaos Simulation"
+        description="Choose a component and simulate failure to estimate severity, blast radius, and affected surfaces."
+        meta={(
+          <>
+            <span className="chip chip-muted">{graph.nodes.length} graph nodes</span>
+            {simResult ? <span className={`badge badge-${simResult.severity === "high" ? "error" : simResult.severity === "medium" ? "pending" : "success"}`}>{simResult.severity} severity</span> : null}
+          </>
+        )}
+      />
 
       <div className="sim-controls">
         <select

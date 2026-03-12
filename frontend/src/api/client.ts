@@ -97,6 +97,11 @@ export async function runProjectScan(projectId: string): Promise<ScanResult> {
   return parseResponse(response, "Scan failed");
 }
 
+export async function fetchLatestProjectScan(projectId: string): Promise<ScanResult> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/scan`);
+  return parseResponse(response, "Failed to load latest scan");
+}
+
 export async function generateProjectGraph(projectId: string): Promise<GraphResponse> {
   const response = await fetch(`${API_BASE}/projects/${projectId}/graph`, {
     method: "POST",

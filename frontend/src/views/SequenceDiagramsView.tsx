@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { GitCommitHorizontal } from "lucide-react";
 import SequenceDiagram, { type SequenceData } from "../SequenceDiagram";
+import PageHeader from "../components/PageHeader";
 import {
   fetchRouteSequences,
   generateAllRouteSequences,
@@ -63,59 +64,90 @@ export default function SequenceDiagramsView({ projectId, refreshKey }: Props) {
 
   if (loading) {
     return (
-      <div className="placeholder-view">
-        <p className="text-muted">Loading sequence diagrams…</p>
+      <div className="page-shell">
+        <PageHeader
+          eyebrow="Sequences"
+          title="Sequence Diagrams"
+          description="Route-level interaction diagrams grounded from request flow and compatibility fallbacks where needed."
+        />
+        <div className="placeholder-view surface-panel">
+          <p className="text-muted">Loading sequence diagrams…</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="placeholder-view">
-        <GitCommitHorizontal size={48} color="#6b6b6b" strokeWidth={1.5} />
-        <h2 className="placeholder-title">Could not load diagrams</h2>
-        <p className="placeholder-sub">{error}</p>
+      <div className="page-shell">
+        <PageHeader
+          eyebrow="Sequences"
+          title="Sequence Diagrams"
+          description="Route-level interaction diagrams grounded from request flow and compatibility fallbacks where needed."
+        />
+        <div className="placeholder-view surface-panel">
+          <GitCommitHorizontal size={48} color="#6b6b6b" strokeWidth={1.5} />
+          <h2 className="placeholder-title">Could not load diagrams</h2>
+          <p className="placeholder-sub">{error}</p>
+        </div>
       </div>
     );
   }
 
   if (records.length === 0) {
     return (
-      <div className="placeholder-view">
-        <GitCommitHorizontal size={48} color="#6b6b6b" strokeWidth={1.5} />
-        <h2 className="placeholder-title">No Route Sequence Diagrams</h2>
-        <p className="placeholder-sub">
-          Generate diagrams from the API Explorer, or use Generate All below.
-        </p>
-        <button
-          className="btn btn-primary"
-          style={{ marginTop: 16 }}
-          disabled={genAllState.running}
-          onClick={handleGenerateAll}
-        >
-          {genAllState.running ? "Generating…" : "Generate All"}
-        </button>
-        {genAllState.progress && (
-          <p className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
-            {genAllState.progress}
+      <div className="page-shell">
+        <PageHeader
+          eyebrow="Sequences"
+          title="Sequence Diagrams"
+          description="Route-level interaction diagrams grounded from request flow and compatibility fallbacks where needed."
+        />
+        <div className="placeholder-view surface-panel">
+          <GitCommitHorizontal size={48} color="#6b6b6b" strokeWidth={1.5} />
+          <h2 className="placeholder-title">No Route Sequence Diagrams</h2>
+          <p className="placeholder-sub">
+            Generate diagrams from the API Explorer, or use Generate All below.
           </p>
-        )}
+          <button
+            className="btn btn-primary"
+            style={{ marginTop: 16 }}
+            disabled={genAllState.running}
+            onClick={handleGenerateAll}
+          >
+            {genAllState.running ? "Generating…" : "Generate All"}
+          </button>
+          {genAllState.progress && (
+            <p className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
+              {genAllState.progress}
+            </p>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="seq-diagrams-view">
-      <div className="seq-diagrams-header">
-        <h1 className="view-title">Sequence Diagrams</h1>
-        <button
-          className="btn btn-secondary btn-sm"
-          disabled={genAllState.running}
-          onClick={handleGenerateAll}
-        >
-          {genAllState.running ? "Generating…" : "Generate All"}
-        </button>
-      </div>
+    <div className="page-shell seq-diagrams-view">
+      <PageHeader
+        eyebrow="Sequences"
+        title="Sequence Diagrams"
+        description="Compare generated route flows, inspect degraded markers, and expand individual diagrams without leaving the gallery."
+        meta={(
+          <>
+            <span className="chip chip-muted">{records.length} saved diagrams</span>
+            <span className="chip chip-muted">{records.filter((record) => record.diagram_data.metadata?.degraded).length} degraded</span>
+          </>
+        )}
+        actions={(
+          <button
+            className="btn btn-secondary btn-sm"
+            disabled={genAllState.running}
+            onClick={handleGenerateAll}
+          >
+            {genAllState.running ? "Generating…" : "Generate All"}
+          </button>
+        )}
+      />
       {genAllState.progress && (
         <p className="text-muted" style={{ fontSize: 12, marginBottom: 12 }}>
           {genAllState.progress}

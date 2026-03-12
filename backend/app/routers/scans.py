@@ -1,6 +1,7 @@
 import os
 import shutil
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -21,6 +22,28 @@ from app.services.scanner_v3 import extract_zip, unwrap_root_dir, run_full_scan
 
 router = APIRouter(prefix="/projects/{project_id}/scan", tags=["scans"])
 logger = logging.getLogger(__name__)
+
+
+def _latest_scan(project_id: str, db: Session) -> Optional[Scan]:
+    return (
+        db.query(Scan)
+        .filter(Scan.project_id == project_id)
+        .order_by(Scan.created_at.desc())
+        .first()
+    )
+
+
+@router.get("", response_model=ScanResponse)
+def get_latest_scan(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    scan = _latest_scan(project_id, db)
+    if not scan:
+        raise HTTPException(status_code=404, detail="No scans found for this project")
+
+    return scan
 
 @router.post("", response_model=ScanResponse, status_code=201)
 def scan_project(project_id: str, db: Session = Depends(get_db)):
