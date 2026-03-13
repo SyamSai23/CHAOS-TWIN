@@ -1,0 +1,575 @@
+{
+  "version": "golden-set-v1",
+  "cases": [
+    {
+      "id": "backend_api_repo",
+      "repo_shape": "backend API repo",
+      "source": { "kind": "workspace", "path": "backend" },
+      "notes": "Primary backend truth case for routes, components, infra, request_flow, sequences, and route anchors.",
+      "targets": {
+        "route_extraction": {
+          "min_total": 10,
+          "expected_routes": [
+            {
+              "method": "POST",
+              "path": "/projects",
+              "file": "app/routers/projects.py",
+              "handler_function": "create_project",
+              "router_prefix": "/projects"
+            },
+            {
+              "method": "DELETE",
+              "path": "/projects/{project_id}",
+              "file": "app/routers/projects.py",
+              "handler_function": "delete_project",
+              "router_prefix": "/projects"
+            },
+            {
+              "method": "GET",
+              "path": "/health",
+              "file": "app/main.py",
+              "handler_function": "health"
+            }
+          ],
+          "forbidden_routes": [
+            {
+              "method": "GET",
+              "path": "/path",
+              "file": "app/services/ast_analyzer.py"
+            }
+          ]
+        },
+        "component_boundaries": {
+          "exact_total": 1,
+          "expected_components": [
+            {
+              "name": "backend",
+              "type": "backend",
+              "root_path_any": [".", "app"],
+              "entry_file_any": ["app/main.py"],
+              "roles_all": ["controller", "service", "model_schema"]
+            }
+          ]
+        },
+        "infra_detection": {
+          "components": [
+            {
+              "name": "backend",
+              "entities": [
+                {
+                  "name": "PostgreSQL",
+                  "must_be_present": true
+                }
+              ]
+            }
+          ]
+        },
+        "request_flow_quality": {
+          "routes": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/projects",
+                "file": "app/routers/projects.py"
+              },
+              "first_stage_type": "dispatch",
+              "last_stage_type": "response",
+              "required_stage_types_in_order": ["dispatch", "handler", "data_access", "response"],
+              "required_stage_types": ["handler", "data_access"],
+              "min_confidence": 0.75,
+              "max_inferred_steps": 2
+            },
+            {
+              "route": {
+                "method": "DELETE",
+                "path": "/projects/{project_id}",
+                "file": "app/routers/projects.py"
+              },
+              "first_stage_type": "dispatch",
+              "last_stage_type": "response",
+              "required_stage_types": ["data_access"],
+              "min_confidence": 0.7,
+              "max_inferred_steps": 3
+            }
+          ]
+        },
+        "sequence_quality": {
+          "routes": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/projects",
+                "file": "app/routers/projects.py"
+              },
+              "expected_sequence_source": "request_flow",
+              "expected_degraded": false,
+              "required_participants": ["Client", "create_project()", "Database"],
+              "required_message_labels": ["POST /projects", "persist changes", "return 201 response"],
+              "min_anchored_messages": 2
+            }
+          ]
+        },
+        "best_target_quality": {
+          "route_targets": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/projects",
+                "file": "app/routers/projects.py"
+              },
+              "expected_file": "app/routers/projects.py",
+              "expected_anchor_kind": "handler_definition",
+              "target_rank_at_least": 90
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "frontend_only_workspace",
+      "repo_shape": "frontend-only repo",
+      "source": { "kind": "workspace", "path": "frontend" },
+      "notes": "Frontend-only boundary case with zero routes and a single rooted frontend component.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 0
+        },
+        "component_boundaries": {
+          "exact_total": 1,
+          "expected_components": [
+            {
+              "name": "frontend",
+              "type": "frontend",
+              "root_path_any": [".", "src"],
+              "entry_file_any": ["src/main.tsx"],
+              "roles_all": ["frontend_entry", "frontend_ui"]
+            }
+          ]
+        },
+        "best_target_quality": {
+          "component_targets": [
+            {
+              "component": { "name": "frontend" },
+              "expected_file": "src/main.tsx",
+              "expected_anchor_kind": "entry_file"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "full_stack_workspace",
+      "repo_shape": "full-stack repo",
+      "source": { "kind": "workspace", "path": "." },
+      "notes": "Full workspace boundary case to ensure backend and frontend stay separated in a single scan.",
+      "targets": {
+        "route_extraction": {
+          "min_total": 10,
+          "expected_routes": [
+            {
+              "method": "POST",
+              "path": "/projects",
+              "file": "backend/app/routers/projects.py",
+              "handler_function": "create_project"
+            }
+          ],
+          "forbidden_routes": [
+            {
+              "method": "GET",
+              "path": "/path",
+              "file": "backend/app/services/ast_analyzer.py"
+            }
+          ]
+        },
+        "component_boundaries": {
+          "exact_total": 2,
+          "expected_components": [
+            {
+              "name": "backend",
+              "type": "backend",
+              "root_path_any": ["backend"],
+              "entry_file_any": ["backend/app/main.py"],
+              "roles_all": ["controller"]
+            },
+            {
+              "name": "frontend",
+              "type": "frontend",
+              "root_path_any": ["frontend"],
+              "entry_file_any": ["frontend/src/main.tsx"],
+              "roles_all": ["frontend_entry"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "python_service_flow",
+      "repo_shape": "service-heavy/integration-heavy backend",
+      "source": { "kind": "generated", "fixture": "python_service_flow" },
+      "notes": "Synthetic high-signal backend for service, repository, external, request_flow, sequence, and stage-anchor accuracy.",
+      "targets": {
+        "route_extraction": {
+          "min_total": 1,
+          "expected_routes": [
+            {
+              "method": "POST",
+              "path": "/api/users",
+              "file": "app.py",
+              "handler_function": "create_user",
+              "auth_hints_all": ["require_auth"],
+              "validation_hints_all": ["validate_payload"]
+            }
+          ]
+        },
+        "request_flow_quality": {
+          "routes": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/users",
+                "file": "app.py"
+              },
+              "first_stage_type": "dispatch",
+              "last_stage_type": "response",
+              "required_stage_types_in_order": ["dispatch", "auth", "validation", "handler", "service", "external", "repository", "response"],
+              "required_stage_types": ["auth", "validation", "service", "external", "repository"],
+              "min_confidence": 0.75,
+              "max_inferred_steps": 4
+            }
+          ]
+        },
+        "sequence_quality": {
+          "routes": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/users",
+                "file": "app.py"
+              },
+              "expected_sequence_source": "request_flow",
+              "expected_degraded": true,
+              "required_participants": ["Client", "User Service", "User Repository", "Billing Gateway"],
+              "required_message_labels": ["verify auth token", "validate request payload", "create user account", "call Billing Gateway", "save user", "return 201 response"],
+              "min_anchored_messages": 5
+            }
+          ]
+        },
+        "best_target_quality": {
+          "request_flow_stage_targets": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/users",
+                "file": "app.py"
+              },
+              "stage_type": "service",
+              "expected_file": "app/services/user_service.py",
+              "expected_symbol": "create_user_account"
+            },
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/users",
+                "file": "app.py"
+              },
+              "stage_type": "external",
+              "expected_file": "app/integrations/billing_gateway.py",
+              "expected_symbol": "create_customer"
+            },
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/users",
+                "file": "app.py"
+              },
+              "stage_type": "repository",
+              "expected_file": "app/repositories/user_repository.py",
+              "expected_symbol": "save_user"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "integration_heavy_backend",
+      "repo_shape": "integration-heavy backend",
+      "source": { "kind": "generated", "fixture": "integration_heavy_backend" },
+      "notes": "External integration detection and best-target grounding case.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 0
+        },
+        "component_boundaries": {
+          "exact_total": 1,
+          "expected_components": [
+            {
+              "type": "backend",
+              "entry_file_any": ["app.py"]
+            }
+          ]
+        },
+        "infra_detection": {
+          "components": [
+            {
+              "index": 0,
+              "entities": [
+                {
+                  "name": "AWS / S3",
+                  "must_be_present": true
+                },
+                {
+                  "name": "SendGrid",
+                  "must_be_present": true
+                }
+              ]
+            }
+          ]
+        },
+        "best_target_quality": {
+          "infra_targets": [
+            {
+              "component": { "index": 0 },
+              "entity_name": "AWS / S3",
+              "expected_file": "app.py",
+              "expected_anchor_kind": "client_initialization"
+            },
+            {
+              "component": { "index": 0 },
+              "entity_name": "SendGrid",
+              "expected_file": "app.py",
+              "expected_anchor_kind": "client_initialization"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mixed_language_monorepo_boundary",
+      "repo_shape": "mixed-language monorepo",
+      "source": { "kind": "generated", "fixture": "mixed_language_monorepo" },
+      "notes": "Adversarial monorepo case that should preserve backend/frontend boundaries without inventing a shared-package component.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 1,
+          "expected_routes": [
+            {
+              "method": "GET",
+              "path": "/api/health",
+              "file": "services/api/app/main.py",
+              "handler_function": "health_check"
+            }
+          ]
+        },
+        "component_boundaries": {
+          "exact_total": 2,
+          "expected_components": [
+            {
+              "index": 0,
+              "type": "backend",
+              "root_path_any": ["services/api", "services/api/app"],
+              "entry_file_any": ["services/api/app/main.py"],
+              "roles_all": ["controller"]
+            },
+            {
+              "index": 1,
+              "type": "frontend",
+              "root_path_any": ["services/web", "services/web/src"],
+              "entry_file_any": ["services/web/src/main.tsx"],
+              "roles_all": ["frontend_entry"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "route_false_positive_guard",
+      "repo_shape": "backend false-positive guard",
+      "source": { "kind": "generated", "fixture": "route_false_positive" },
+      "notes": "Route extractor should keep the real health endpoint and suppress service-file route-like noise.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 1,
+          "expected_routes": [
+            {
+              "method": "GET",
+              "path": "/healthz",
+              "file": "app.py",
+              "handler_function": "healthz"
+            }
+          ],
+          "forbidden_routes": [
+            {
+              "method": "GET",
+              "path": "/path",
+              "file": "app/services/path_service.py"
+            }
+          ]
+        },
+        "best_target_quality": {
+          "route_targets": [
+            {
+              "route": {
+                "method": "GET",
+                "path": "/healthz",
+                "file": "app.py"
+              },
+              "expected_file": "app.py",
+              "expected_anchor_kind": "handler_definition",
+              "expected_symbol": "healthz",
+              "target_rank_at_least": 90
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "degraded_fallback_sequence",
+      "repo_shape": "degraded fallback backend",
+      "source": { "kind": "generated", "fixture": "degraded_fallback_backend" },
+      "notes": "Intentional route-analysis fallback case. The harness seeds stored analysis for a manual route because scanned routes are request_flow-backed.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 0
+        },
+        "sequence_quality": {
+          "routes": [
+            {
+              "route_body": {
+                "method": "POST",
+                "path": "/legacy/reports/{report_id}",
+                "file": "legacy_handlers.py",
+                "component": "backend"
+              },
+              "stored_route_analysis": {
+                "handler_function": "sync_invoice_report",
+                "phases": [
+                  {
+                    "phase_id": "prepare",
+                    "name": "Prepare report request",
+                    "steps": [
+                      { "type": "service_call", "name": "prepare payload" }
+                    ]
+                  },
+                  {
+                    "phase_id": "external",
+                    "name": "Call upstream report provider",
+                    "steps": [
+                      { "type": "external", "name": "requests.post" }
+                    ]
+                  },
+                  {
+                    "phase_id": "persist",
+                    "name": "Persist generated report",
+                    "steps": [
+                      { "type": "db_write", "name": "db.execute" },
+                      { "type": "db_write", "name": "db.commit" }
+                    ]
+                  }
+                ],
+                "error_paths": [],
+                "has_database": true,
+                "has_external": true
+              },
+              "expected_sequence_source": "route_analysis_fallback",
+              "expected_degraded": true,
+              "required_participants": ["Client", "legacy_handlers.py", "sync_invoice_report()", "Database", "External API"],
+              "required_warning_substrings": ["fell back to legacy analysis"],
+              "min_anchored_messages": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ambiguous_anchor_backend",
+      "repo_shape": "ambiguous anchor backend",
+      "source": { "kind": "generated", "fixture": "ambiguous_anchor_backend" },
+      "notes": "Symbol-sensitive anchor case with a shadow service function that should not steal the service-stage target.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 1,
+          "expected_routes": [
+            {
+              "method": "POST",
+              "path": "/api/invoices",
+              "file": "app.py",
+              "handler_function": "create_invoice"
+            }
+          ]
+        },
+        "request_flow_quality": {
+          "routes": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/invoices",
+                "file": "app.py"
+              },
+              "first_stage_type": "dispatch",
+              "last_stage_type": "response",
+              "required_stage_types_in_order": ["dispatch", "handler", "service", "repository", "response"],
+              "required_stage_types": ["service", "repository"],
+              "min_confidence": 0.7,
+              "max_inferred_steps": 2
+            }
+          ]
+        },
+        "best_target_quality": {
+          "route_targets": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/invoices",
+                "file": "app.py"
+              },
+              "expected_file": "app.py",
+              "expected_anchor_kind": "handler_definition",
+              "expected_symbol": "create_invoice",
+              "target_rank_at_least": 90
+            }
+          ],
+          "request_flow_stage_targets": [
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/invoices",
+                "file": "app.py"
+              },
+              "stage_type": "service",
+              "expected_file": "app/services/invoice_service.py",
+              "expected_symbol": "create_invoice_record",
+              "expected_anchor_kind": "symbol"
+            },
+            {
+              "route": {
+                "method": "POST",
+                "path": "/api/invoices",
+                "file": "app.py"
+              },
+              "stage_type": "repository",
+              "expected_file": "app/repositories/invoice_repo.py",
+              "expected_symbol": "persist_invoice",
+              "expected_anchor_kind": "symbol"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sparse_minimal_repo",
+      "repo_shape": "sparse/minimal repo",
+      "source": { "kind": "generated", "fixture": "sparse_minimal" },
+      "notes": "Deliberate low-signal product-semantics case. Empty outputs are correct here.",
+      "targets": {
+        "route_extraction": {
+          "exact_total": 0,
+          "classification": "product_semantics"
+        },
+        "component_boundaries": {
+          "exact_total": 0,
+          "classification": "product_semantics"
+        }
+      }
+    }
+  ]
+}

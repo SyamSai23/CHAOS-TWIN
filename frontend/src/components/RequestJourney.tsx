@@ -11,9 +11,19 @@ import {
   RefreshCw,
   Send,
   Shield,
+  Sparkles,
 } from "lucide-react";
-import type { RouteItem, RouteAnalysis, RouteDetail, AnalysisParticipant, RequestFlow, RequestFlowStage } from "../types";
-import type { SequenceData } from "../SequenceDiagram";
+import type {
+  AnalysisParticipant,
+  ArtifactExplanation,
+  ArtifactExplanationRequest,
+  RequestFlow,
+  RequestFlowStage,
+  RouteAnalysis,
+  RouteDetail,
+  RouteItem,
+} from "../types";
+import type { Message, SequenceData } from "../SequenceDiagram";
 import SequenceDiagram from "../SequenceDiagram";
 import ModeToggle from "./ModeToggle";
 import PhaseCard from "./PhaseCard";
@@ -21,6 +31,7 @@ import ErrorPathsSection from "./ErrorPathsSection";
 import InlineCodePeek, { type InlineCodePeekAnchor } from "./InlineCodePeek";
 import {
   analyzeRoute,
+  fetchArtifactExplanation,
   fetchRouteDetail,
   fetchRouteAnalysis,
   fetchRouteSequence,
@@ -271,7 +282,115 @@ function requestFlowStageAnchor(stage: RequestFlowStage): InlineCodePeekAnchor |
   };
 }
 
-function RequestFlowStageCard({ stage, index, projectId }: { stage: RequestFlowStage; index: number; projectId: string }) {
+function explanationTone(explanation: ArtifactExplanation | null): "grounded" | "fallback" {
+  return explanation?.generated_from.status === "ai_generated" ? "grounded" : "fallback";
+}
+
+function ExplanationPanel({
+  explanation,
+  loading,
+  error,
+}: {
+  explanation: ArtifactExplanation | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (!loading && !error && !explanation) {
+    return null;
+  }
+
+  if (loading) {
+    return (
+      <section className="rj-explanation-card">
+        <div className="rj-explanation-loading">
+          <Sparkles size={16} />
+          <span>Generating grounded explanation…</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="rj-explanation-card">
+        <div className="rj-explanation-loading is-error">
+          <AlertCircle size={16} />
+          <span>{error}</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (!explanation) {
+    return null;
+  }
+
+  const warnings = Array.isArray(explanation.grounding.warnings)
+    ? explanation.grounding.warnings.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : [];
+
+  return (
+    <section className="rj-explanation-card">
+      <div className="rj-explanation-top">
+        <div>
+          <span className="rj-overview-label">AI Explanation</span>
+          <h3 className="rj-explanation-title">{explanation.title}</h3>
+        </div>
+        <div className="rj-hero-meta">
+          <span className={`rj-trust-pill is-${explanationTone(explanation)}`}>
+            {explanation.generated_from.status === "ai_generated" ? "AI generated" : "Deterministic fallback"}
+          </span>
+          {explanation.generated_from.snippet_included ? <span className="rj-trust-pill is-neutral">Snippet grounded</span> : null}
+        </div>
+      </div>
+
+      <p className="rj-route-description">{explanation.explanation.summary}</p>
+
+      <div className="rj-explanation-grid">
+        <div className="rj-overview-card">
+          <span className="rj-overview-label">Why It Matters</span>
+          <p className="rj-explanation-copy">{explanation.explanation.why_it_matters}</p>
+        </div>
+        <div className="rj-overview-card">
+          <span className="rj-overview-label">What Could Fail</span>
+          <p className="rj-explanation-copy">{explanation.explanation.what_could_fail}</p>
+        </div>
+      </div>
+
+      <div className="rj-explanation-note">
+        <span className="rj-overview-label">Confidence Note</span>
+        <p className="rj-explanation-copy">{explanation.explanation.confidence_note}</p>
+      </div>
+
+      {explanation.explanation.evidence_used.length > 0 && (
+        <div className="rj-stage-hints">
+          {explanation.explanation.evidence_used.map((item) => (
+            <span key={item} className="rj-stage-hint-chip">{item}</span>
+          ))}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="rj-flow-banner rj-flow-banner-caution">
+          <AlertCircle size={14} />
+          <span>{warnings[0]}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RequestFlowStageCard({
+  stage,
+  index,
+  projectId,
+  onExplain,
+}: {
+  stage: RequestFlowStage;
+  index: number;
+  projectId: string;
+  onExplain: (stage: RequestFlowStage, index: number) => void;
+}) {
   const stageStyle = STAGE_STYLES[stage.stage_type] ?? { icon: ArrowRight, accent: "#6b7280", label: stage.stage_type.replace(/_/g, " ") };
   const StageIcon = stageStyle.icon;
   const anchor = formatStageAnchor(stage);
@@ -298,6 +417,10 @@ function RequestFlowStageCard({ stage, index, projectId }: { stage: RequestFlowS
             </span>
             <span className="rj-stage-confidence">{formatConfidence(stage.confidence)}</span>
           </div>
+          <button type="button" className="btn btn-secondary btn-sm rj-explain-btn" onClick={() => onExplain(stage, index)}>
+            <Sparkles size={14} />
+            Explain step
+          </button>
         </div>
 
         <h3 className="rj-stage-title">{stage.label}</h3>
@@ -424,6 +547,9 @@ export default function RequestJourney({
   const [seqChecked, setSeqChecked] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [seqError, setSeqError] = useState<string | null>(null);
+  const [explanation, setExplanation] = useState<ArtifactExplanation | null>(null);
+  const [explanationLoading, setExplanationLoading] = useState(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
 
   const methodColor = ({
     GET: "#22c55e", POST: "#3b82f6", PUT: "#eab308",
@@ -490,7 +616,7 @@ export default function RequestJourney({
     } finally {
       setAnalysisLoading(false);
     }
-  }, [route.id, route.method, route.path, route.file, route.component, projectId, analysisCache, detailCache]);
+  }, [route, projectId, analysisCache, detailCache]);
 
   useEffect(() => {
     fetchAnalysis();
@@ -502,6 +628,9 @@ export default function RequestJourney({
     setLocalSeq(null);
     setSeqError(null);
     setSeqChecked(false);
+    setExplanation(null);
+    setExplanationLoading(false);
+    setExplanationError(null);
 
     if (seqData) {
       setLocalSeq(seqData);
@@ -544,6 +673,40 @@ export default function RequestJourney({
       .finally(() => setGenerating(false));
   };
 
+  const loadExplanation = useCallback(async (payload: ArtifactExplanationRequest) => {
+    setExplanationLoading(true);
+    setExplanationError(null);
+    try {
+      const response = await fetchArtifactExplanation(projectId, payload);
+      setExplanation(response);
+    } catch (error) {
+      setExplanation(null);
+      setExplanationError(error instanceof Error ? error.message : "Failed to load explanation");
+    } finally {
+      setExplanationLoading(false);
+    }
+  }, [projectId]);
+
+  const handleExplainRoute = useCallback(() => {
+    void loadExplanation({ target_type: "route", route_id: route.id });
+  }, [loadExplanation, route.id]);
+
+  const handleExplainStage = useCallback((stage: RequestFlowStage, index: number) => {
+    void loadExplanation({
+      target_type: "request_flow_step",
+      route_id: route.id,
+      stage_step: stage.step ?? index,
+    });
+  }, [loadExplanation, route.id]);
+
+  const handleMessageSelect = useCallback((message: Message) => {
+    void loadExplanation({
+      target_type: "sequence_step",
+      route_id: route.id,
+      message_id: message.id,
+    });
+  }, [loadExplanation, route.id]);
+
   const displayPhases = analysis ? buildDisplayPhases(analysis) : [];
   const analysisTags = analysis ? buildAnalysisTags(analysis) : [];
   const sequenceCandidate = localSeq || seqData;
@@ -567,7 +730,7 @@ export default function RequestJourney({
   const inferredWarning = flowSignals.inferredSteps > 0;
   const journeyHighlights = requestFlowHighlights(activeRequestFlow, analysis);
   const trustTone = hasFallbackFlow ? "fallback" : inferredWarning || (typeof flowConfidence === "number" && flowConfidence < 0.75) ? "caution" : "grounded";
-  const detailState = routeDetail ? "Route detail loaded" : analysis ? "Compatibility analysis loaded" : "Loading route detail";
+  const detailState = routeDetail ? "Grounded detail" : analysis ? "Compatibility detail" : "Loading detail";
   const detailStateTone = routeDetail ? "grounded" : analysis ? "fallback" : "neutral";
   const sequenceStatus = visibleSeq ? "Sequence available" : route.has_sequence ? "Sequence stored" : "No sequence yet";
 
@@ -589,7 +752,6 @@ export default function RequestJourney({
               <span className={`rj-trust-pill is-${trustTone}`}>{flowSource}</span>
               <span className={`rj-trust-pill is-${detailStateTone}`}>{detailState}</span>
               <span className="rj-trust-pill is-neutral">{sequenceStatus}</span>
-              {routeOwner !== "unknown" ? <span className="rj-trust-pill is-neutral">{routeOwner}</span> : null}
             </div>
           </div>
           <ModeToggle mode={mode} onChange={setMode} />
@@ -611,11 +773,19 @@ export default function RequestJourney({
             <span className="rj-hero-stat-value rj-hero-stat-value-code">{routeOwner}</span>
             <span className="rj-hero-stat-sub">{activeComponent || "unknown component"}</span>
           </div>
-          <div className="rj-hero-stat-card">
-            <span className="rj-overview-label">Code anchor</span>
-            <span className="rj-hero-stat-value rj-hero-stat-value-code">{formatAnchor(routeDetail, route)}</span>
-            <span className="rj-hero-stat-sub">{activeFile}</span>
-          </div>
+        </div>
+
+        <div className="rj-anchor-strip">
+          <span className="rj-anchor-label">Code anchor</span>
+          <span className="rj-anchor-value">{formatAnchor(routeDetail, route)}</span>
+          <span className="rj-anchor-file">{activeFile}</span>
+        </div>
+
+        <div className="rj-hero-actions">
+          <button type="button" className="btn btn-secondary btn-sm rj-explain-route-btn" onClick={handleExplainRoute}>
+            <Sparkles size={14} />
+            Explain journey
+          </button>
         </div>
       </div>
 
@@ -685,6 +855,7 @@ export default function RequestJourney({
                             stage={stage}
                             index={index}
                             projectId={projectId}
+                            onExplain={handleExplainStage}
                           />
                         ))}
                       </div>
@@ -840,11 +1011,14 @@ export default function RequestJourney({
                     {generating ? "Regenerating…" : "Regenerate"}
                   </button>
                 )}
+                onMessageSelect={handleMessageSelect}
               />
             </div>
           )}
         </div>
       )}
+
+      <ExplanationPanel explanation={explanation} loading={explanationLoading} error={explanationError} />
     </div>
   );
 }

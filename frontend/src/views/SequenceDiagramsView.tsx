@@ -41,9 +41,9 @@ export default function SequenceDiagramsView({ projectId, refreshKey }: Props) {
   }, [projectId]);
 
   useEffect(() => {
-    setRecords([]);
-    setExpandedId(null);
-    fetchRecords();
+    queueMicrotask(() => {
+      fetchRecords();
+    });
   }, [projectId, refreshKey, fetchRecords]);
 
   const handleGenerateAll = () => {

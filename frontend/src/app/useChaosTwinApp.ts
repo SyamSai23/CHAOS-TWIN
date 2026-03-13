@@ -31,7 +31,7 @@ import type { NavItem } from "./navigation";
 
 export function useChaosTwinApp() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<NavItem>("overview");
+  const [activeView, setActiveView] = useState<NavItem>("workspace");
   const [showCreateForm, setShowCreateForm] = useState(false);
 
   const [apiStatus, setApiStatus] = useState<string>("loading...");
@@ -112,6 +112,15 @@ export function useChaosTwinApp() {
     };
   }, [scans, selectedProjectId]);
 
+  useEffect(() => {
+    if (!selectedProjectId) {
+      return;
+    }
+    if (!(scans[selectedProjectId] ?? null) && activeView !== "workspace") {
+      setActiveView("workspace");
+    }
+  }, [activeView, scans, selectedProjectId]);
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
 
   async function fetchProjects() {
@@ -188,7 +197,7 @@ export function useChaosTwinApp() {
       setShowCreateForm(false);
       setProjects((prev) => [...prev, newProject]);
       setSelectedProjectId(newProject.id);
-      setActiveView("overview");
+      setActiveView("workspace");
     } catch {
       setCreateError("Failed to create project");
     }
@@ -247,6 +256,9 @@ export function useChaosTwinApp() {
       const data = await runProjectScan(projectId);
       resetProjectDerivedState(projectId);
       setScans((prev) => ({ ...prev, [projectId]: data }));
+      if (projectId === selectedProjectId) {
+        setActiveView("workspace");
+      }
     } catch (error) {
       setScanErrors((prev) => ({
         ...prev,
@@ -373,7 +385,7 @@ export function useChaosTwinApp() {
 
   function selectProject(projectId: string) {
     setSelectedProjectId(projectId);
-    setActiveView("overview");
+    setActiveView("workspace");
   }
 
   function statusDotClass(value: string) {

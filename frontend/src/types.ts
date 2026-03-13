@@ -473,6 +473,42 @@ export type RouteAnalysis = {
   request_flow?: RequestFlow | null;
 };
 
+export type ExplanationTargetType = "route" | "request_flow_step" | "sequence_step";
+
+export type ArtifactExplanationRequest = {
+  target_type: ExplanationTargetType;
+  route_id: string;
+  stage_step?: number | null;
+  message_id?: string | null;
+};
+
+export type ArtifactExplanationContent = {
+  summary: string;
+  why_it_matters: string;
+  what_could_fail: string;
+  confidence_note: string;
+  evidence_used: string[];
+};
+
+export type ArtifactExplanationGeneratedFrom = {
+  status: string;
+  model: string;
+  llm_enabled: boolean;
+  prompt_char_count: number;
+  snippet_included: boolean;
+  fallback_reason?: string | null;
+  generated_at: string;
+};
+
+export type ArtifactExplanation = {
+  target_type: ExplanationTargetType;
+  target_id: string;
+  title: string;
+  explanation: ArtifactExplanationContent;
+  grounding: Record<string, unknown>;
+  generated_from: ArtifactExplanationGeneratedFrom;
+};
+
 /* ── Utility ── */
 
 export function shortenLabel(text: string): string {

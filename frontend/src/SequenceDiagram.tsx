@@ -400,7 +400,7 @@ export default function SequenceDiagram({ data, actions, onMessageSelect }: Sequ
           const toneClass = MESSAGE_TONES[tone].badge;
           const anchorText = formatAnchorSummary(message.code_anchor ?? message.best_target ?? null);
           const compact = isLowSignalMessage(message);
-          const actionable = Boolean(onMessageSelect && anchorText);
+          const actionable = Boolean(onMessageSelect);
           const content = (
             <>
               <div className="sequence-step-main">
@@ -439,16 +439,23 @@ export default function SequenceDiagram({ data, actions, onMessageSelect }: Sequ
 
           if (actionable) {
             return (
-              <button
+              <div
                 key={message.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 className={`sequence-step-card ${compact ? "is-compact" : ""} is-actionable`}
                 onClick={() => onMessageSelect?.(message)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onMessageSelect?.(message);
+                  }
+                }}
                 data-anchor-path={message.code_anchor?.file_path ?? message.best_target?.file_path ?? undefined}
                 data-anchor-symbol={message.code_anchor?.symbol_name ?? message.best_target?.symbol_name ?? undefined}
               >
                 {content}
-              </button>
+              </div>
             );
           }
 

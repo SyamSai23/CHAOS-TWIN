@@ -1,0 +1,2588 @@
+{
+  "corpus_version": "golden-set-v1",
+  "overall": {
+    "score": 1.0,
+    "total_checks": 171,
+    "passed_checks": 171,
+    "failed_checks": 0,
+    "failure_kinds": {},
+    "by_target": {
+      "route_extraction": {
+        "score": 1.0,
+        "case_count": 10
+      },
+      "component_boundaries": {
+        "score": 1.0,
+        "case_count": 6
+      },
+      "infra_detection": {
+        "score": 1.0,
+        "case_count": 2
+      },
+      "request_flow_quality": {
+        "score": 1.0,
+        "case_count": 3
+      },
+      "sequence_quality": {
+        "score": 1.0,
+        "case_count": 3
+      },
+      "best_target_quality": {
+        "score": 1.0,
+        "case_count": 6
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "backend_api_repo",
+      "repo_shape": "backend API repo",
+      "source": {
+        "kind": "workspace",
+        "path": "backend"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 7,
+            "passed_checks": 7,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_below_min",
+              "message": "route count 30 >= 10",
+              "classification": "accuracy",
+              "actual": 30,
+              "expected": 10
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for POST /projects",
+              "classification": "accuracy",
+              "actual": "create_project",
+              "expected": "create_project"
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field router_prefix matches for POST /projects",
+              "classification": "accuracy",
+              "actual": "/projects",
+              "expected": "/projects"
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for DELETE /projects/{project_id}",
+              "classification": "accuracy",
+              "actual": "delete_project",
+              "expected": "delete_project"
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field router_prefix matches for DELETE /projects/{project_id}",
+              "classification": "accuracy",
+              "actual": "/projects",
+              "expected": "/projects"
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for GET /health",
+              "classification": "accuracy",
+              "actual": "health",
+              "expected": "health"
+            },
+            {
+              "passed": true,
+              "code": "route_forbidden_present",
+              "message": "forbidden route absent: GET /path (app/services/ast_analyzer.py)",
+              "classification": "accuracy",
+              "actual": null,
+              "expected": {
+                "method": "GET",
+                "path": "/path",
+                "file": "app/services/ast_analyzer.py"
+              }
+            }
+          ],
+          "mismatches": []
+        },
+        "component_boundaries": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 8,
+            "passed_checks": 8,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "component_total_mismatch",
+              "message": "component count 1 == 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field name matches for backend",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": "backend"
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for backend",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": "backend"
+            },
+            {
+              "passed": true,
+              "code": "component_root_path_mismatch",
+              "message": "component root_path matches allowed set for backend",
+              "classification": "accuracy",
+              "actual": ".",
+              "expected": [
+                ".",
+                "app"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for backend",
+              "classification": "accuracy",
+              "actual": "app/main.py",
+              "expected": [
+                "app/main.py"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role controller for backend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "controller",
+                "service",
+                "config_infra",
+                "model_schema"
+              ],
+              "expected": "controller"
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role service for backend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "controller",
+                "service",
+                "config_infra",
+                "model_schema"
+              ],
+              "expected": "service"
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role model_schema for backend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "controller",
+                "service",
+                "config_infra",
+                "model_schema"
+              ],
+              "expected": "model_schema"
+            }
+          ],
+          "mismatches": []
+        },
+        "infra_detection": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "infra_presence_mismatch",
+              "message": "infra entity present: PostgreSQL",
+              "classification": "accuracy",
+              "actual": {
+                "name": "PostgreSQL",
+                "kind": "sql",
+                "entity_type": "data_store",
+                "confidence": 0.74
+              },
+              "expected": {
+                "name": "PostgreSQL",
+                "must_be_present": true
+              }
+            }
+          ],
+          "mismatches": []
+        },
+        "request_flow_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 14,
+            "passed_checks": 14,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "request_flow_missing",
+              "message": "request_flow exists for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ],
+              "expected": "non-empty request_flow"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_first_stage_mismatch",
+              "message": "first request_flow stage for POST /projects (app/routers/projects.py) == dispatch",
+              "classification": "accuracy",
+              "actual": "dispatch",
+              "expected": "dispatch"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_last_stage_mismatch",
+              "message": "last request_flow stage for POST /projects (app/routers/projects.py) == response",
+              "classification": "accuracy",
+              "actual": "response",
+              "expected": "response"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage handler for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ],
+              "expected": "handler"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage data_access for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ],
+              "expected": "data_access"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_order_mismatch",
+              "message": "request_flow preserves expected stage order for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ],
+              "expected": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "request_flow_confidence_too_low",
+              "message": "request_flow confidence for POST /projects (app/routers/projects.py) >= 0.75",
+              "classification": "accuracy",
+              "actual": 0.84,
+              "expected": 0.75
+            },
+            {
+              "passed": true,
+              "code": "request_flow_too_many_inferred",
+              "message": "request_flow inferred steps for POST /projects (app/routers/projects.py) <= 2",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 2
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing",
+              "message": "request_flow exists for DELETE /projects/{project_id} (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ],
+              "expected": "non-empty request_flow"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_first_stage_mismatch",
+              "message": "first request_flow stage for DELETE /projects/{project_id} (app/routers/projects.py) == dispatch",
+              "classification": "accuracy",
+              "actual": "dispatch",
+              "expected": "dispatch"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_last_stage_mismatch",
+              "message": "last request_flow stage for DELETE /projects/{project_id} (app/routers/projects.py) == response",
+              "classification": "accuracy",
+              "actual": "response",
+              "expected": "response"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage data_access for DELETE /projects/{project_id} (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "data_access",
+                "response"
+              ],
+              "expected": "data_access"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_confidence_too_low",
+              "message": "request_flow confidence for DELETE /projects/{project_id} (app/routers/projects.py) >= 0.7",
+              "classification": "accuracy",
+              "actual": 0.84,
+              "expected": 0.7
+            },
+            {
+              "passed": true,
+              "code": "request_flow_too_many_inferred",
+              "message": "request_flow inferred steps for DELETE /projects/{project_id} (app/routers/projects.py) <= 3",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 3
+            }
+          ],
+          "mismatches": []
+        },
+        "sequence_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 9,
+            "passed_checks": 9,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "sequence_source_mismatch",
+              "message": "sequence source for POST /projects (app/routers/projects.py) == request_flow",
+              "classification": "accuracy",
+              "actual": "request_flow",
+              "expected": "request_flow"
+            },
+            {
+              "passed": true,
+              "code": "sequence_degraded_flag_mismatch",
+              "message": "sequence degraded flag for POST /projects (app/routers/projects.py) == False",
+              "classification": "accuracy",
+              "actual": false,
+              "expected": false
+            },
+            {
+              "passed": true,
+              "code": "sequence_anchor_coverage_too_low",
+              "message": "sequence anchored messages for POST /projects (app/routers/projects.py) >= 2",
+              "classification": "accuracy",
+              "actual": 5,
+              "expected": 2
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant Client for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_project()",
+                "Database"
+              ],
+              "expected": "Client"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant create_project() for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_project()",
+                "Database"
+              ],
+              "expected": "create_project()"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant Database for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_project()",
+                "Database"
+              ],
+              "expected": "Database"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'POST /projects' for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /projects",
+                "invoke create project handler",
+                "persist changes",
+                "write complete",
+                "return 201 response"
+              ],
+              "expected": "POST /projects"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'persist changes' for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /projects",
+                "invoke create project handler",
+                "persist changes",
+                "write complete",
+                "return 201 response"
+              ],
+              "expected": "persist changes"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'return 201 response' for POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /projects",
+                "invoke create project handler",
+                "persist changes",
+                "write complete",
+                "return 201 response"
+              ],
+              "expected": "return 201 response"
+            }
+          ],
+          "mismatches": []
+        },
+        "best_target_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 4,
+            "passed_checks": 4,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "best_target_missing",
+              "message": "best target exists for route POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": {
+                "file_path": "app/routers/projects.py",
+                "symbol_name": "create_project",
+                "symbol_kind": "handler",
+                "class_name": null,
+                "line_start": 22,
+                "line_end": 27,
+                "anchor_kind": "handler_definition",
+                "target_rank": 100,
+                "selection_reason": "route target includes an explicit handler symbol and line range",
+                "confidence": 0.98
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/projects",
+                  "file": "app/routers/projects.py"
+                },
+                "expected_file": "app/routers/projects.py",
+                "expected_anchor_kind": "handler_definition",
+                "target_rank_at_least": 90
+              }
+            },
+            {
+              "passed": true,
+              "code": "best_target_file_mismatch",
+              "message": "best target file matches for route POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": "app/routers/projects.py",
+              "expected": "app/routers/projects.py"
+            },
+            {
+              "passed": true,
+              "code": "best_target_anchor_kind_mismatch",
+              "message": "best target anchor kind matches for route POST /projects (app/routers/projects.py)",
+              "classification": "accuracy",
+              "actual": "handler_definition",
+              "expected": "handler_definition"
+            },
+            {
+              "passed": true,
+              "code": "best_target_rank_too_low",
+              "message": "best target rank for route POST /projects (app/routers/projects.py) >= 90",
+              "classification": "accuracy",
+              "actual": 100,
+              "expected": 90
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "frontend_only_workspace",
+      "repo_shape": "frontend-only repo",
+      "source": {
+        "kind": "workspace",
+        "path": "frontend"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 0 == 0",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 0
+            }
+          ],
+          "mismatches": []
+        },
+        "component_boundaries": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 7,
+            "passed_checks": 7,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "component_total_mismatch",
+              "message": "component count 1 == 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field name matches for frontend",
+              "classification": "accuracy",
+              "actual": "frontend",
+              "expected": "frontend"
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for frontend",
+              "classification": "accuracy",
+              "actual": "frontend",
+              "expected": "frontend"
+            },
+            {
+              "passed": true,
+              "code": "component_root_path_mismatch",
+              "message": "component root_path matches allowed set for frontend",
+              "classification": "accuracy",
+              "actual": ".",
+              "expected": [
+                ".",
+                "src"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for frontend",
+              "classification": "accuracy",
+              "actual": "src/main.tsx",
+              "expected": [
+                "src/main.tsx"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role frontend_entry for frontend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "frontend_entry",
+                "frontend_page",
+                "frontend_ui",
+                "shared"
+              ],
+              "expected": "frontend_entry"
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role frontend_ui for frontend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "frontend_entry",
+                "frontend_page",
+                "frontend_ui",
+                "shared"
+              ],
+              "expected": "frontend_ui"
+            }
+          ],
+          "mismatches": []
+        },
+        "best_target_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 3,
+            "passed_checks": 3,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "best_target_missing",
+              "message": "best target exists for component frontend",
+              "classification": "accuracy",
+              "actual": {
+                "file_path": "src/main.tsx",
+                "anchor_kind": "entry_file",
+                "target_rank": 82,
+                "selection_reason": "component entry file is the strongest direct representative anchor"
+              },
+              "expected": {
+                "component": {
+                  "name": "frontend"
+                },
+                "expected_file": "src/main.tsx",
+                "expected_anchor_kind": "entry_file"
+              }
+            },
+            {
+              "passed": true,
+              "code": "best_target_file_mismatch",
+              "message": "best target file matches for component frontend",
+              "classification": "accuracy",
+              "actual": "src/main.tsx",
+              "expected": "src/main.tsx"
+            },
+            {
+              "passed": true,
+              "code": "best_target_anchor_kind_mismatch",
+              "message": "best target anchor kind matches for component frontend",
+              "classification": "accuracy",
+              "actual": "entry_file",
+              "expected": "entry_file"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "full_stack_workspace",
+      "repo_shape": "full-stack repo",
+      "source": {
+        "kind": "workspace",
+        "path": "."
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 3,
+            "passed_checks": 3,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_below_min",
+              "message": "route count 30 >= 10",
+              "classification": "accuracy",
+              "actual": 30,
+              "expected": 10
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for POST /projects",
+              "classification": "accuracy",
+              "actual": "create_project",
+              "expected": "create_project"
+            },
+            {
+              "passed": true,
+              "code": "route_forbidden_present",
+              "message": "forbidden route absent: GET /path (backend/app/services/ast_analyzer.py)",
+              "classification": "accuracy",
+              "actual": null,
+              "expected": {
+                "method": "GET",
+                "path": "/path",
+                "file": "backend/app/services/ast_analyzer.py"
+              }
+            }
+          ],
+          "mismatches": []
+        },
+        "component_boundaries": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 11,
+            "passed_checks": 11,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "component_total_mismatch",
+              "message": "component count 2 == 2",
+              "classification": "accuracy",
+              "actual": 2,
+              "expected": 2
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field name matches for backend",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": "backend"
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for backend",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": "backend"
+            },
+            {
+              "passed": true,
+              "code": "component_root_path_mismatch",
+              "message": "component root_path matches allowed set for backend",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": [
+                "backend"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for backend",
+              "classification": "accuracy",
+              "actual": "backend/app/main.py",
+              "expected": [
+                "backend/app/main.py"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role controller for backend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "controller",
+                "service",
+                "config_infra",
+                "model_schema"
+              ],
+              "expected": "controller"
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field name matches for frontend",
+              "classification": "accuracy",
+              "actual": "frontend",
+              "expected": "frontend"
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for frontend",
+              "classification": "accuracy",
+              "actual": "frontend",
+              "expected": "frontend"
+            },
+            {
+              "passed": true,
+              "code": "component_root_path_mismatch",
+              "message": "component root_path matches allowed set for frontend",
+              "classification": "accuracy",
+              "actual": "frontend",
+              "expected": [
+                "frontend"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for frontend",
+              "classification": "accuracy",
+              "actual": "frontend/src/main.tsx",
+              "expected": [
+                "frontend/src/main.tsx"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role frontend_entry for frontend",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "frontend_entry",
+                "frontend_page",
+                "frontend_ui",
+                "shared"
+              ],
+              "expected": "frontend_entry"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "python_service_flow",
+      "repo_shape": "service-heavy/integration-heavy backend",
+      "source": {
+        "kind": "generated",
+        "fixture": "python_service_flow"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 4,
+            "passed_checks": 4,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_below_min",
+              "message": "route count 1 >= 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for POST /api/users",
+              "classification": "accuracy",
+              "actual": "create_user",
+              "expected": "create_user"
+            },
+            {
+              "passed": true,
+              "code": "route_hint_missing",
+              "message": "route includes auth_hints_all item require_auth for POST /api/users",
+              "classification": "accuracy",
+              "actual": [
+                "require_auth"
+              ],
+              "expected": "require_auth"
+            },
+            {
+              "passed": true,
+              "code": "route_hint_missing",
+              "message": "route includes validation_hints_all item validate_payload for POST /api/users",
+              "classification": "accuracy",
+              "actual": [
+                "validate_payload"
+              ],
+              "expected": "validate_payload"
+            }
+          ],
+          "mismatches": []
+        },
+        "request_flow_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 11,
+            "passed_checks": 11,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "request_flow_missing",
+              "message": "request_flow exists for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": "non-empty request_flow"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_first_stage_mismatch",
+              "message": "first request_flow stage for POST /api/users (app.py) == dispatch",
+              "classification": "accuracy",
+              "actual": "dispatch",
+              "expected": "dispatch"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_last_stage_mismatch",
+              "message": "last request_flow stage for POST /api/users (app.py) == response",
+              "classification": "accuracy",
+              "actual": "response",
+              "expected": "response"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage auth for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": "auth"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage validation for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": "validation"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage service for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": "service"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage external for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": "external"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage repository for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": "repository"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_order_mismatch",
+              "message": "request_flow preserves expected stage order for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "data_access",
+                "response"
+              ],
+              "expected": [
+                "dispatch",
+                "auth",
+                "validation",
+                "handler",
+                "service",
+                "external",
+                "repository",
+                "response"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "request_flow_confidence_too_low",
+              "message": "request_flow confidence for POST /api/users (app.py) >= 0.75",
+              "classification": "accuracy",
+              "actual": 0.82,
+              "expected": 0.75
+            },
+            {
+              "passed": true,
+              "code": "request_flow_too_many_inferred",
+              "message": "request_flow inferred steps for POST /api/users (app.py) <= 4",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 4
+            }
+          ],
+          "mismatches": []
+        },
+        "sequence_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 13,
+            "passed_checks": 13,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "sequence_source_mismatch",
+              "message": "sequence source for POST /api/users (app.py) == request_flow",
+              "classification": "accuracy",
+              "actual": "request_flow",
+              "expected": "request_flow"
+            },
+            {
+              "passed": true,
+              "code": "sequence_degraded_flag_mismatch",
+              "message": "sequence degraded flag for POST /api/users (app.py) == True",
+              "classification": "accuracy",
+              "actual": true,
+              "expected": true
+            },
+            {
+              "passed": true,
+              "code": "sequence_anchor_coverage_too_low",
+              "message": "sequence anchored messages for POST /api/users (app.py) >= 5",
+              "classification": "accuracy",
+              "actual": 13,
+              "expected": 5
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant Client for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_user()",
+                "User Service",
+                "Billing Gateway",
+                "User Repository",
+                "Database"
+              ],
+              "expected": "Client"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant User Service for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_user()",
+                "User Service",
+                "Billing Gateway",
+                "User Repository",
+                "Database"
+              ],
+              "expected": "User Service"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant User Repository for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_user()",
+                "User Service",
+                "Billing Gateway",
+                "User Repository",
+                "Database"
+              ],
+              "expected": "User Repository"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant Billing Gateway for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "create_user()",
+                "User Service",
+                "Billing Gateway",
+                "User Repository",
+                "Database"
+              ],
+              "expected": "Billing Gateway"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'verify auth token' for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /api/users",
+                "verify auth token",
+                "validate request payload",
+                "invoke create user handler",
+                "create user account",
+                "call Billing Gateway",
+                "billing gateway result",
+                "save user",
+                "persist changes",
+                "write complete",
+                "repository result",
+                "service result",
+                "return 201 response"
+              ],
+              "expected": "verify auth token"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'validate request payload' for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /api/users",
+                "verify auth token",
+                "validate request payload",
+                "invoke create user handler",
+                "create user account",
+                "call Billing Gateway",
+                "billing gateway result",
+                "save user",
+                "persist changes",
+                "write complete",
+                "repository result",
+                "service result",
+                "return 201 response"
+              ],
+              "expected": "validate request payload"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'create user account' for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /api/users",
+                "verify auth token",
+                "validate request payload",
+                "invoke create user handler",
+                "create user account",
+                "call Billing Gateway",
+                "billing gateway result",
+                "save user",
+                "persist changes",
+                "write complete",
+                "repository result",
+                "service result",
+                "return 201 response"
+              ],
+              "expected": "create user account"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'call Billing Gateway' for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /api/users",
+                "verify auth token",
+                "validate request payload",
+                "invoke create user handler",
+                "create user account",
+                "call Billing Gateway",
+                "billing gateway result",
+                "save user",
+                "persist changes",
+                "write complete",
+                "repository result",
+                "service result",
+                "return 201 response"
+              ],
+              "expected": "call Billing Gateway"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'save user' for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /api/users",
+                "verify auth token",
+                "validate request payload",
+                "invoke create user handler",
+                "create user account",
+                "call Billing Gateway",
+                "billing gateway result",
+                "save user",
+                "persist changes",
+                "write complete",
+                "repository result",
+                "service result",
+                "return 201 response"
+              ],
+              "expected": "save user"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_message",
+              "message": "sequence contains message 'return 201 response' for POST /api/users (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "POST /api/users",
+                "verify auth token",
+                "validate request payload",
+                "invoke create user handler",
+                "create user account",
+                "call Billing Gateway",
+                "billing gateway result",
+                "save user",
+                "persist changes",
+                "write complete",
+                "repository result",
+                "service result",
+                "return 201 response"
+              ],
+              "expected": "return 201 response"
+            }
+          ],
+          "mismatches": []
+        },
+        "best_target_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 9,
+            "passed_checks": 9,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "request_flow_stage_missing",
+              "message": "request_flow stage service for POST /api/users (app.py) exists",
+              "classification": "accuracy",
+              "actual": {
+                "stage_type": "service",
+                "label": "Run service create_user_account",
+                "file_path": "app/services/user_service.py",
+                "symbol_name": "create_user_account",
+                "class_name": null,
+                "line_start": 17,
+                "line_end": 17,
+                "confidence": 0.82,
+                "provenance": "import_tracing",
+                "anchor_kind": "symbol",
+                "target_rank": 2,
+                "selection_reason": "Call target resolves to a local module with a strong structural role.",
+                "evidence": {
+                  "file_path": "app/services/user_service.py",
+                  "symbol_name": "create_user_account",
+                  "class_name": null,
+                  "line_start": 17,
+                  "line_end": 17,
+                  "anchor_kind": "symbol",
+                  "target_rank": 2,
+                  "selection_reason": "Call target resolves to a local module with a strong structural role."
+                },
+                "hints": [],
+                "step": 5
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/api/users",
+                  "file": "app.py"
+                },
+                "stage_type": "service",
+                "expected_file": "app/services/user_service.py",
+                "expected_symbol": "create_user_account"
+              }
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_file_mismatch",
+              "message": "request_flow stage service for POST /api/users (app.py) file matches",
+              "classification": "accuracy",
+              "actual": "app/services/user_service.py",
+              "expected": "app/services/user_service.py"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_symbol_mismatch",
+              "message": "request_flow stage service for POST /api/users (app.py) symbol matches",
+              "classification": "accuracy",
+              "actual": "create_user_account",
+              "expected": "create_user_account"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_missing",
+              "message": "request_flow stage external for POST /api/users (app.py) exists",
+              "classification": "accuracy",
+              "actual": {
+                "stage_type": "external",
+                "label": "Call external integration create_customer",
+                "file_path": "app/integrations/billing_gateway.py",
+                "symbol_name": "create_customer",
+                "class_name": null,
+                "line_start": 5,
+                "line_end": 5,
+                "confidence": 0.76,
+                "provenance": "import_tracing",
+                "anchor_kind": "symbol",
+                "target_rank": 3,
+                "selection_reason": "Call target resolves to a local module with a strong structural role.",
+                "evidence": {
+                  "file_path": "app/integrations/billing_gateway.py",
+                  "symbol_name": "create_customer",
+                  "class_name": null,
+                  "line_start": 5,
+                  "line_end": 5,
+                  "anchor_kind": "symbol",
+                  "target_rank": 3,
+                  "selection_reason": "Call target resolves to a local module with a strong structural role."
+                },
+                "hints": [],
+                "step": 6
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/api/users",
+                  "file": "app.py"
+                },
+                "stage_type": "external",
+                "expected_file": "app/integrations/billing_gateway.py",
+                "expected_symbol": "create_customer"
+              }
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_file_mismatch",
+              "message": "request_flow stage external for POST /api/users (app.py) file matches",
+              "classification": "accuracy",
+              "actual": "app/integrations/billing_gateway.py",
+              "expected": "app/integrations/billing_gateway.py"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_symbol_mismatch",
+              "message": "request_flow stage external for POST /api/users (app.py) symbol matches",
+              "classification": "accuracy",
+              "actual": "create_customer",
+              "expected": "create_customer"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_missing",
+              "message": "request_flow stage repository for POST /api/users (app.py) exists",
+              "classification": "accuracy",
+              "actual": {
+                "stage_type": "repository",
+                "label": "Access repository save_user",
+                "file_path": "app/repositories/user_repository.py",
+                "symbol_name": "save_user",
+                "class_name": null,
+                "line_start": 6,
+                "line_end": 6,
+                "confidence": 0.76,
+                "provenance": "import_tracing",
+                "anchor_kind": "symbol",
+                "target_rank": 2,
+                "selection_reason": "Call target resolves to a local module with a strong structural role.",
+                "evidence": {
+                  "file_path": "app/repositories/user_repository.py",
+                  "symbol_name": "save_user",
+                  "class_name": null,
+                  "line_start": 6,
+                  "line_end": 6,
+                  "anchor_kind": "symbol",
+                  "target_rank": 2,
+                  "selection_reason": "Call target resolves to a local module with a strong structural role."
+                },
+                "hints": [],
+                "step": 7
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/api/users",
+                  "file": "app.py"
+                },
+                "stage_type": "repository",
+                "expected_file": "app/repositories/user_repository.py",
+                "expected_symbol": "save_user"
+              }
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_file_mismatch",
+              "message": "request_flow stage repository for POST /api/users (app.py) file matches",
+              "classification": "accuracy",
+              "actual": "app/repositories/user_repository.py",
+              "expected": "app/repositories/user_repository.py"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_symbol_mismatch",
+              "message": "request_flow stage repository for POST /api/users (app.py) symbol matches",
+              "classification": "accuracy",
+              "actual": "save_user",
+              "expected": "save_user"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "integration_heavy_backend",
+      "repo_shape": "integration-heavy backend",
+      "source": {
+        "kind": "generated",
+        "fixture": "integration_heavy_backend"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 0 == 0",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 0
+            }
+          ],
+          "mismatches": []
+        },
+        "component_boundaries": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 3,
+            "passed_checks": 3,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "component_total_mismatch",
+              "message": "component count 1 == 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for {\"entry_file_any\": [\"app.py\"], \"type\": \"backend\"}",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": "backend"
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for {\"entry_file_any\": [\"app.py\"], \"type\": \"backend\"}",
+              "classification": "accuracy",
+              "actual": "app.py",
+              "expected": [
+                "app.py"
+              ]
+            }
+          ],
+          "mismatches": []
+        },
+        "infra_detection": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 2,
+            "passed_checks": 2,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "infra_presence_mismatch",
+              "message": "infra entity present: AWS / S3",
+              "classification": "accuracy",
+              "actual": {
+                "name": "AWS / S3",
+                "kind": "object_storage",
+                "entity_type": "external_integration",
+                "confidence": 0.68
+              },
+              "expected": {
+                "name": "AWS / S3",
+                "must_be_present": true
+              }
+            },
+            {
+              "passed": true,
+              "code": "infra_presence_mismatch",
+              "message": "infra entity present: SendGrid",
+              "classification": "accuracy",
+              "actual": {
+                "name": "SendGrid",
+                "kind": "email",
+                "entity_type": "external_integration",
+                "confidence": 0.68
+              },
+              "expected": {
+                "name": "SendGrid",
+                "must_be_present": true
+              }
+            }
+          ],
+          "mismatches": []
+        },
+        "best_target_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 6,
+            "passed_checks": 6,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "best_target_missing",
+              "message": "best target exists for infra AWS / S3 in component[0]",
+              "classification": "accuracy",
+              "actual": {
+                "file_path": "app.py",
+                "line_start": 5,
+                "line_end": 5,
+                "anchor_kind": "client_initialization",
+                "target_rank": 110,
+                "selection_reason": "strongest infrastructure evidence is a concrete client_initialization code anchor"
+              },
+              "expected": {
+                "component": {
+                  "index": 0
+                },
+                "entity_name": "AWS / S3",
+                "expected_file": "app.py",
+                "expected_anchor_kind": "client_initialization"
+              }
+            },
+            {
+              "passed": true,
+              "code": "best_target_file_mismatch",
+              "message": "best target file matches for infra AWS / S3 in component[0]",
+              "classification": "accuracy",
+              "actual": "app.py",
+              "expected": "app.py"
+            },
+            {
+              "passed": true,
+              "code": "best_target_anchor_kind_mismatch",
+              "message": "best target anchor kind matches for infra AWS / S3 in component[0]",
+              "classification": "accuracy",
+              "actual": "client_initialization",
+              "expected": "client_initialization"
+            },
+            {
+              "passed": true,
+              "code": "best_target_missing",
+              "message": "best target exists for infra SendGrid in component[0]",
+              "classification": "accuracy",
+              "actual": {
+                "file_path": "app.py",
+                "line_start": 6,
+                "line_end": 6,
+                "anchor_kind": "client_initialization",
+                "target_rank": 110,
+                "selection_reason": "strongest infrastructure evidence is a concrete client_initialization code anchor"
+              },
+              "expected": {
+                "component": {
+                  "index": 0
+                },
+                "entity_name": "SendGrid",
+                "expected_file": "app.py",
+                "expected_anchor_kind": "client_initialization"
+              }
+            },
+            {
+              "passed": true,
+              "code": "best_target_file_mismatch",
+              "message": "best target file matches for infra SendGrid in component[0]",
+              "classification": "accuracy",
+              "actual": "app.py",
+              "expected": "app.py"
+            },
+            {
+              "passed": true,
+              "code": "best_target_anchor_kind_mismatch",
+              "message": "best target anchor kind matches for infra SendGrid in component[0]",
+              "classification": "accuracy",
+              "actual": "client_initialization",
+              "expected": "client_initialization"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "mixed_language_monorepo_boundary",
+      "repo_shape": "mixed-language monorepo",
+      "source": {
+        "kind": "generated",
+        "fixture": "mixed_language_monorepo"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 2,
+            "passed_checks": 2,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 1 == 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for GET /api/health",
+              "classification": "accuracy",
+              "actual": "health_check",
+              "expected": "health_check"
+            }
+          ],
+          "mismatches": []
+        },
+        "component_boundaries": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 9,
+            "passed_checks": 9,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "component_total_mismatch",
+              "message": "component count 2 == 2",
+              "classification": "accuracy",
+              "actual": 2,
+              "expected": 2
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for component[0]",
+              "classification": "accuracy",
+              "actual": "backend",
+              "expected": "backend"
+            },
+            {
+              "passed": true,
+              "code": "component_root_path_mismatch",
+              "message": "component root_path matches allowed set for component[0]",
+              "classification": "accuracy",
+              "actual": "services/api",
+              "expected": [
+                "services/api",
+                "services/api/app"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for component[0]",
+              "classification": "accuracy",
+              "actual": "services/api/app/main.py",
+              "expected": [
+                "services/api/app/main.py"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role controller for component[0]",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "controller",
+                "service"
+              ],
+              "expected": "controller"
+            },
+            {
+              "passed": true,
+              "code": "component_field_mismatch",
+              "message": "component field type matches for component[1]",
+              "classification": "accuracy",
+              "actual": "frontend",
+              "expected": "frontend"
+            },
+            {
+              "passed": true,
+              "code": "component_root_path_mismatch",
+              "message": "component root_path matches allowed set for component[1]",
+              "classification": "accuracy",
+              "actual": "services/web",
+              "expected": [
+                "services/web",
+                "services/web/src"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_entry_file_mismatch",
+              "message": "component entry_file matches allowed set for component[1]",
+              "classification": "accuracy",
+              "actual": "services/web/src/main.tsx",
+              "expected": [
+                "services/web/src/main.tsx"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "component_role_missing",
+              "message": "component contains role frontend_entry for component[1]",
+              "classification": "accuracy",
+              "actual": [
+                "entry",
+                "frontend_entry",
+                "service",
+                "frontend_ui"
+              ],
+              "expected": "frontend_entry"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "route_false_positive_guard",
+      "repo_shape": "backend false-positive guard",
+      "source": {
+        "kind": "generated",
+        "fixture": "route_false_positive"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 3,
+            "passed_checks": 3,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 1 == 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for GET /healthz",
+              "classification": "accuracy",
+              "actual": "healthz",
+              "expected": "healthz"
+            },
+            {
+              "passed": true,
+              "code": "route_forbidden_present",
+              "message": "forbidden route absent: GET /path (app/services/path_service.py)",
+              "classification": "accuracy",
+              "actual": null,
+              "expected": {
+                "method": "GET",
+                "path": "/path",
+                "file": "app/services/path_service.py"
+              }
+            }
+          ],
+          "mismatches": []
+        },
+        "best_target_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 5,
+            "passed_checks": 5,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "best_target_missing",
+              "message": "best target exists for route GET /healthz (app.py)",
+              "classification": "accuracy",
+              "actual": {
+                "file_path": "app.py",
+                "symbol_name": "healthz",
+                "symbol_kind": "handler",
+                "class_name": null,
+                "line_start": 6,
+                "line_end": 7,
+                "anchor_kind": "handler_definition",
+                "target_rank": 100,
+                "selection_reason": "route target includes an explicit handler symbol and line range",
+                "confidence": 0.96
+              },
+              "expected": {
+                "route": {
+                  "method": "GET",
+                  "path": "/healthz",
+                  "file": "app.py"
+                },
+                "expected_file": "app.py",
+                "expected_anchor_kind": "handler_definition",
+                "expected_symbol": "healthz",
+                "target_rank_at_least": 90
+              }
+            },
+            {
+              "passed": true,
+              "code": "best_target_file_mismatch",
+              "message": "best target file matches for route GET /healthz (app.py)",
+              "classification": "accuracy",
+              "actual": "app.py",
+              "expected": "app.py"
+            },
+            {
+              "passed": true,
+              "code": "best_target_anchor_kind_mismatch",
+              "message": "best target anchor kind matches for route GET /healthz (app.py)",
+              "classification": "accuracy",
+              "actual": "handler_definition",
+              "expected": "handler_definition"
+            },
+            {
+              "passed": true,
+              "code": "best_target_symbol_mismatch",
+              "message": "best target symbol matches for route GET /healthz (app.py)",
+              "classification": "accuracy",
+              "actual": "healthz",
+              "expected": "healthz"
+            },
+            {
+              "passed": true,
+              "code": "best_target_rank_too_low",
+              "message": "best target rank for route GET /healthz (app.py) >= 90",
+              "classification": "accuracy",
+              "actual": 100,
+              "expected": 90
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "degraded_fallback_sequence",
+      "repo_shape": "degraded fallback backend",
+      "source": {
+        "kind": "generated",
+        "fixture": "degraded_fallback_backend"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 0 == 0",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 0
+            }
+          ],
+          "mismatches": []
+        },
+        "sequence_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 9,
+            "passed_checks": 9,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "sequence_source_mismatch",
+              "message": "sequence source for POST /legacy/reports/{report_id} (legacy_handlers.py) == route_analysis_fallback",
+              "classification": "accuracy",
+              "actual": "route_analysis_fallback",
+              "expected": "route_analysis_fallback"
+            },
+            {
+              "passed": true,
+              "code": "sequence_degraded_flag_mismatch",
+              "message": "sequence degraded flag for POST /legacy/reports/{report_id} (legacy_handlers.py) == True",
+              "classification": "accuracy",
+              "actual": true,
+              "expected": true
+            },
+            {
+              "passed": true,
+              "code": "sequence_anchor_coverage_too_low",
+              "message": "sequence anchored messages for POST /legacy/reports/{report_id} (legacy_handlers.py) >= 3",
+              "classification": "accuracy",
+              "actual": 9,
+              "expected": 3
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant Client for POST /legacy/reports/{report_id} (legacy_handlers.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "legacy_handlers.py",
+                "sync_invoice_report()",
+                "Database",
+                "External API"
+              ],
+              "expected": "Client"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant legacy_handlers.py for POST /legacy/reports/{report_id} (legacy_handlers.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "legacy_handlers.py",
+                "sync_invoice_report()",
+                "Database",
+                "External API"
+              ],
+              "expected": "legacy_handlers.py"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant sync_invoice_report() for POST /legacy/reports/{report_id} (legacy_handlers.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "legacy_handlers.py",
+                "sync_invoice_report()",
+                "Database",
+                "External API"
+              ],
+              "expected": "sync_invoice_report()"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant Database for POST /legacy/reports/{report_id} (legacy_handlers.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "legacy_handlers.py",
+                "sync_invoice_report()",
+                "Database",
+                "External API"
+              ],
+              "expected": "Database"
+            },
+            {
+              "passed": true,
+              "code": "sequence_missing_participant",
+              "message": "sequence contains participant External API for POST /legacy/reports/{report_id} (legacy_handlers.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Client",
+                "legacy_handlers.py",
+                "sync_invoice_report()",
+                "Database",
+                "External API"
+              ],
+              "expected": "External API"
+            },
+            {
+              "passed": true,
+              "code": "sequence_warning_missing",
+              "message": "sequence warnings contain 'fell back to legacy analysis' for POST /legacy/reports/{report_id} (legacy_handlers.py)",
+              "classification": "accuracy",
+              "actual": [
+                "Sequence fell back to legacy analysis because deterministic request_flow was unavailable."
+              ],
+              "expected": "fell back to legacy analysis"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "ambiguous_anchor_backend",
+      "repo_shape": "ambiguous anchor backend",
+      "source": {
+        "kind": "generated",
+        "fixture": "ambiguous_anchor_backend"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 2,
+            "passed_checks": 2,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 1 == 1",
+              "classification": "accuracy",
+              "actual": 1,
+              "expected": 1
+            },
+            {
+              "passed": true,
+              "code": "route_field_mismatch",
+              "message": "route field handler_function matches for POST /api/invoices",
+              "classification": "accuracy",
+              "actual": "create_invoice",
+              "expected": "create_invoice"
+            }
+          ],
+          "mismatches": []
+        },
+        "request_flow_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 8,
+            "passed_checks": 8,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "request_flow_missing",
+              "message": "request_flow exists for POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "service",
+                "service",
+                "repository",
+                "response"
+              ],
+              "expected": "non-empty request_flow"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_first_stage_mismatch",
+              "message": "first request_flow stage for POST /api/invoices (app.py) == dispatch",
+              "classification": "accuracy",
+              "actual": "dispatch",
+              "expected": "dispatch"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_last_stage_mismatch",
+              "message": "last request_flow stage for POST /api/invoices (app.py) == response",
+              "classification": "accuracy",
+              "actual": "response",
+              "expected": "response"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage service for POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "service",
+                "service",
+                "repository",
+                "response"
+              ],
+              "expected": "service"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_missing_stage",
+              "message": "request_flow contains stage repository for POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "service",
+                "service",
+                "repository",
+                "response"
+              ],
+              "expected": "repository"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_order_mismatch",
+              "message": "request_flow preserves expected stage order for POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": [
+                "dispatch",
+                "handler",
+                "service",
+                "service",
+                "repository",
+                "response"
+              ],
+              "expected": [
+                "dispatch",
+                "handler",
+                "service",
+                "repository",
+                "response"
+              ]
+            },
+            {
+              "passed": true,
+              "code": "request_flow_confidence_too_low",
+              "message": "request_flow confidence for POST /api/invoices (app.py) >= 0.7",
+              "classification": "accuracy",
+              "actual": 0.83,
+              "expected": 0.7
+            },
+            {
+              "passed": true,
+              "code": "request_flow_too_many_inferred",
+              "message": "request_flow inferred steps for POST /api/invoices (app.py) <= 2",
+              "classification": "accuracy",
+              "actual": 0,
+              "expected": 2
+            }
+          ],
+          "mismatches": []
+        },
+        "best_target_quality": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 13,
+            "passed_checks": 13,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "best_target_missing",
+              "message": "best target exists for route POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": {
+                "file_path": "app.py",
+                "symbol_name": "create_invoice",
+                "symbol_kind": "handler",
+                "class_name": null,
+                "line_start": 8,
+                "line_end": 11,
+                "anchor_kind": "handler_definition",
+                "target_rank": 100,
+                "selection_reason": "route target includes an explicit handler symbol and line range",
+                "confidence": 0.96
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/api/invoices",
+                  "file": "app.py"
+                },
+                "expected_file": "app.py",
+                "expected_anchor_kind": "handler_definition",
+                "expected_symbol": "create_invoice",
+                "target_rank_at_least": 90
+              }
+            },
+            {
+              "passed": true,
+              "code": "best_target_file_mismatch",
+              "message": "best target file matches for route POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": "app.py",
+              "expected": "app.py"
+            },
+            {
+              "passed": true,
+              "code": "best_target_anchor_kind_mismatch",
+              "message": "best target anchor kind matches for route POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": "handler_definition",
+              "expected": "handler_definition"
+            },
+            {
+              "passed": true,
+              "code": "best_target_symbol_mismatch",
+              "message": "best target symbol matches for route POST /api/invoices (app.py)",
+              "classification": "accuracy",
+              "actual": "create_invoice",
+              "expected": "create_invoice"
+            },
+            {
+              "passed": true,
+              "code": "best_target_rank_too_low",
+              "message": "best target rank for route POST /api/invoices (app.py) >= 90",
+              "classification": "accuracy",
+              "actual": 100,
+              "expected": 90
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_missing",
+              "message": "request_flow stage service for POST /api/invoices (app.py) exists",
+              "classification": "accuracy",
+              "actual": {
+                "stage_type": "service",
+                "label": "Run service create_invoice_record",
+                "file_path": "app/services/invoice_service.py",
+                "symbol_name": "create_invoice_record",
+                "class_name": null,
+                "line_start": 11,
+                "line_end": 11,
+                "confidence": 0.82,
+                "provenance": "import_tracing",
+                "anchor_kind": "symbol",
+                "target_rank": 2,
+                "selection_reason": "Call target resolves to a local module with a strong structural role.",
+                "evidence": {
+                  "file_path": "app/services/invoice_service.py",
+                  "symbol_name": "create_invoice_record",
+                  "class_name": null,
+                  "line_start": 11,
+                  "line_end": 11,
+                  "anchor_kind": "symbol",
+                  "target_rank": 2,
+                  "selection_reason": "Call target resolves to a local module with a strong structural role."
+                },
+                "hints": [],
+                "step": 4
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/api/invoices",
+                  "file": "app.py"
+                },
+                "stage_type": "service",
+                "expected_file": "app/services/invoice_service.py",
+                "expected_symbol": "create_invoice_record",
+                "expected_anchor_kind": "symbol"
+              }
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_file_mismatch",
+              "message": "request_flow stage service for POST /api/invoices (app.py) file matches",
+              "classification": "accuracy",
+              "actual": "app/services/invoice_service.py",
+              "expected": "app/services/invoice_service.py"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_symbol_mismatch",
+              "message": "request_flow stage service for POST /api/invoices (app.py) symbol matches",
+              "classification": "accuracy",
+              "actual": "create_invoice_record",
+              "expected": "create_invoice_record"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_anchor_kind_mismatch",
+              "message": "request_flow stage service for POST /api/invoices (app.py) anchor kind matches",
+              "classification": "accuracy",
+              "actual": "symbol",
+              "expected": "symbol"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_missing",
+              "message": "request_flow stage repository for POST /api/invoices (app.py) exists",
+              "classification": "accuracy",
+              "actual": {
+                "stage_type": "repository",
+                "label": "Access repository persist_invoice",
+                "file_path": "app/repositories/invoice_repo.py",
+                "symbol_name": "persist_invoice",
+                "class_name": null,
+                "line_start": 4,
+                "line_end": 4,
+                "confidence": 0.76,
+                "provenance": "import_tracing",
+                "anchor_kind": "symbol",
+                "target_rank": 2,
+                "selection_reason": "Call target resolves to a local module with a strong structural role.",
+                "evidence": {
+                  "file_path": "app/repositories/invoice_repo.py",
+                  "symbol_name": "persist_invoice",
+                  "class_name": null,
+                  "line_start": 4,
+                  "line_end": 4,
+                  "anchor_kind": "symbol",
+                  "target_rank": 2,
+                  "selection_reason": "Call target resolves to a local module with a strong structural role."
+                },
+                "hints": [],
+                "step": 5
+              },
+              "expected": {
+                "route": {
+                  "method": "POST",
+                  "path": "/api/invoices",
+                  "file": "app.py"
+                },
+                "stage_type": "repository",
+                "expected_file": "app/repositories/invoice_repo.py",
+                "expected_symbol": "persist_invoice",
+                "expected_anchor_kind": "symbol"
+              }
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_file_mismatch",
+              "message": "request_flow stage repository for POST /api/invoices (app.py) file matches",
+              "classification": "accuracy",
+              "actual": "app/repositories/invoice_repo.py",
+              "expected": "app/repositories/invoice_repo.py"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_symbol_mismatch",
+              "message": "request_flow stage repository for POST /api/invoices (app.py) symbol matches",
+              "classification": "accuracy",
+              "actual": "persist_invoice",
+              "expected": "persist_invoice"
+            },
+            {
+              "passed": true,
+              "code": "request_flow_stage_anchor_kind_mismatch",
+              "message": "request_flow stage repository for POST /api/invoices (app.py) anchor kind matches",
+              "classification": "accuracy",
+              "actual": "symbol",
+              "expected": "symbol"
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "case_id": "sparse_minimal_repo",
+      "repo_shape": "sparse/minimal repo",
+      "source": {
+        "kind": "generated",
+        "fixture": "sparse_minimal"
+      },
+      "score": 1.0,
+      "target_results": {
+        "route_extraction": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "route_total_mismatch",
+              "message": "route count 0 == 0",
+              "classification": "product_semantics",
+              "actual": 0,
+              "expected": 0
+            }
+          ],
+          "mismatches": []
+        },
+        "component_boundaries": {
+          "score": 1.0,
+          "summary": {
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0
+          },
+          "checks": [
+            {
+              "passed": true,
+              "code": "component_total_mismatch",
+              "message": "component count 0 == 0",
+              "classification": "product_semantics",
+              "actual": 0,
+              "expected": 0
+            }
+          ],
+          "mismatches": []
+        }
+      }
+    }
+  ],
+  "strongest_areas": [
+    {
+      "target": "route_extraction",
+      "score": 1.0,
+      "reason": "This target family is producing a high proportion of correct checks."
+    },
+    {
+      "target": "component_boundaries",
+      "score": 1.0,
+      "reason": "Top-level boundaries are staying stable across representative repo shapes."
+    },
+    {
+      "target": "infra_detection",
+      "score": 1.0,
+      "reason": "Datastore and external detection is matching curated expectations consistently."
+    }
+  ],
+  "weakest_areas": [],
+  "recurring_error_patterns": [],
+  "recommended_next_fixes": [
+    {
+      "area": "coverage_growth",
+      "why": "The current golden set is stable and mostly accurate.",
+      "next_fix": "Expand the corpus with one or two additional manually judged edge cases before AI refinement to keep accuracy pressure high."
+    }
+  ]
+}

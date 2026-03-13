@@ -31,18 +31,37 @@ export default function ApiExplorerView({ projectId, refreshKey }: Props) {
   const [seqCache, setSeqCache] = useState<Record<string, SequenceData>>({});
 
   useEffect(() => {
-    setData(null);
-    setError(null);
-    setSelectedRouteId(null);
-    setSearchQuery("");
-    setMethodFilter(null);
-    setSeqCache({});
-    setLoading(true);
+    let cancelled = false;
 
-    fetchRoutes(projectId)
-      .then((payload: RoutesResponse) => setData(payload))
-      .catch((fetchError) => setError(fetchError.message))
-      .finally(() => setLoading(false));
+    queueMicrotask(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      fetchRoutes(projectId)
+        .then((payload: RoutesResponse) => {
+          if (!cancelled) {
+            setData(payload);
+          }
+        })
+        .catch((fetchError) => {
+          if (!cancelled) {
+            setError(fetchError.message);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [projectId, refreshKey]);
 
   const onSequenceGenerated = useCallback((routeId: string, seqData: SequenceData) => {
@@ -99,35 +118,32 @@ export default function ApiExplorerView({ projectId, refreshKey }: Props) {
       .filter((group) => group.routes.length > 0);
   }, [data, methodFilter, searchQuery]);
 
-  useEffect(() => {
+  const effectiveSelectedRouteId = useMemo(() => {
     if (!filteredGroups.length) {
-      setSelectedRouteId(null);
-      return;
+      return null;
     }
 
     const stillVisible = filteredGroups.some((group) =>
       group.routes.some((route) => route.id === selectedRouteId),
     );
 
-    if (!stillVisible) {
-      setSelectedRouteId(filteredGroups[0].routes[0]?.id ?? null);
-    }
+    return stillVisible ? selectedRouteId : filteredGroups[0].routes[0]?.id ?? null;
   }, [filteredGroups, selectedRouteId]);
 
   const selectedRoute = useMemo(() => {
-    if (!selectedRouteId || !data) {
+    if (!effectiveSelectedRouteId || !data) {
       return null;
     }
 
     for (const group of data.by_component) {
-      const found = group.routes.find((route) => route.id === selectedRouteId);
+      const found = group.routes.find((route) => route.id === effectiveSelectedRouteId);
       if (found) {
         return found;
       }
     }
 
     return null;
-  }, [data, selectedRouteId]);
+  }, [data, effectiveSelectedRouteId]);
 
   if (loading) {
     return (
@@ -205,9 +221,6 @@ export default function ApiExplorerView({ projectId, refreshKey }: Props) {
             <span className="chip chip-muted">{filteredGroups.length} component groups</span>
             <span className="chip chip-muted">{groundedRoutes} grounded</span>
             <span className="chip chip-muted">{degradedRoutes} degraded</span>
-            {methodsToShow.map((method) => (
-              <span key={method} className="chip chip-muted">{method} {data.methods_summary[method]}</span>
-            ))}
           </>
         )}
       />
@@ -225,17 +238,17 @@ export default function ApiExplorerView({ projectId, refreshKey }: Props) {
               <div className="api-summary-card">
                 <span className="api-summary-label">Grounded flow</span>
                 <span className="api-summary-value">{groundedRoutes}</span>
-                <span className="api-summary-sub">Routes with direct request flow</span>
+                <span className="api-summary-sub">Direct request-flow backed routes</span>
               </div>
               <div className="api-summary-card">
                 <span className="api-summary-label">Degraded</span>
                 <span className="api-summary-value">{degradedRoutes}</span>
-                <span className="api-summary-sub">Fallback-backed or lower-confidence</span>
+                <span className="api-summary-sub">Fallback-backed or lower-confidence detail</span>
               </div>
               <div className="api-summary-card">
                 <span className="api-summary-label">Sequence ready</span>
                 <span className="api-summary-value">{sequenceReadyRoutes}</span>
-                <span className="api-summary-sub">Saved sequence diagrams available</span>
+                <span className="api-summary-sub">Saved diagrams available without regeneration</span>
               </div>
             </div>
           </div>
@@ -367,6 +380,7 @@ function RouteRow({ route, selected, onClick }: { route: RouteItem; selected: bo
     : route.handler_function || route.controller_name || route.component || "unknown";
   const degraded = isRouteDegraded(route);
   const badges = routeCapabilityBadges(route);
+  const capabilitySummary = badges.length > 0 ? badges.join(" · ") : null;
 
   return (
     <button className={`api-route-row${selected ? " selected" : ""}`} onClick={onClick}>
@@ -380,8 +394,10 @@ function RouteRow({ route, selected, onClick }: { route: RouteItem; selected: bo
 
       <div className="api-route-row-meta">
         <span className="api-route-owner">{owner}</span>
-        <span className="api-route-file">{route.file}</span>
+        {capabilitySummary ? <span className="api-route-capability-summary">{capabilitySummary}</span> : null}
       </div>
+
+      <div className="api-route-fileline">{route.file}</div>
 
       <div className="api-route-row-badges">
         <span className={`api-route-flow-badge ${flowSummary?.has_request_flow ? "is-grounded" : "is-fallback"}`}>
@@ -390,10 +406,8 @@ function RouteRow({ route, selected, onClick }: { route: RouteItem; selected: bo
         {typeof flowSummary?.confidence === "number" ? (
           <span className="api-route-flow-badge is-confidence">{Math.round(flowSummary.confidence * 100)}% confidence</span>
         ) : null}
-        {degraded ? <span className="api-route-flow-badge is-warning">Degraded</span> : null}
-        {badges.slice(0, 2).map((badge) => (
-          <span key={badge} className="api-route-flow-badge is-capability">{badge}</span>
-        ))}
+        {route.has_sequence ? <span className="api-route-flow-badge is-capability">Sequence ready</span> : null}
+        {degraded && flowSummary?.has_request_flow ? <span className="api-route-flow-badge is-warning">Use caution</span> : null}
       </div>
     </button>
   );

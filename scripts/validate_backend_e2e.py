@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import shutil
+import sys
 import tempfile
 import uuid
 import zipfile
@@ -12,6 +13,10 @@ from typing import Optional
 
 from fastapi.testclient import TestClient
 
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "backend"))
+
 from app.db.session import SessionLocal
 from app.main import app
 from app.models.graph_edge import GraphEdge
@@ -20,9 +25,6 @@ from app.models.project import Project
 from app.models.project_model_snapshot import ProjectModelSnapshot
 from app.models.scan import Scan
 from app.models.simulation_run import SimulationRun
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass
@@ -378,11 +380,28 @@ def ensure_status(response, expected: int, label: str) -> None:
         raise RuntimeError(f"{label} failed: {response.status_code} {response.text}")
 
 
+ARCHIVE_EXCLUDED_PARTS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "dist",
+    "build",
+    "uploads",
+    "workspaces",
+    "__pycache__",
+}
+
+
+def should_skip_archive_path(source_dir: Path, path: Path) -> bool:
+    relative_parts = path.relative_to(source_dir).parts
+    return any(part in ARCHIVE_EXCLUDED_PARTS for part in relative_parts)
+
+
 def build_zip_bytes(source_dir: Path) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(source_dir.rglob("*")):
-            if not path.is_file():
+            if not path.is_file() or should_skip_archive_path(source_dir, path):
                 continue
             archive.write(path, path.relative_to(source_dir))
     return buffer.getvalue()

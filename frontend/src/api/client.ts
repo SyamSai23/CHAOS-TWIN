@@ -1,4 +1,6 @@
 import type {
+  ArtifactExplanation,
+  ArtifactExplanationRequest,
   CodePeekResponse,
   DeepDiveResult,
   GraphResponse,
@@ -212,4 +214,16 @@ export async function generateAllRouteSequences(
     method: "POST",
   });
   return parseResponse(response, "Batch generation failed");
+}
+
+export async function fetchArtifactExplanation(
+  projectId: string,
+  payload: ArtifactExplanationRequest,
+): Promise<ArtifactExplanation> {
+  const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/explanations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse(response, "Failed to load explanation");
 }

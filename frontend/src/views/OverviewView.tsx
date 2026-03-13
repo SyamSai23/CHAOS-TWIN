@@ -246,7 +246,7 @@ export default function OverviewView({ project, scan, refreshKey }: OverviewView
   const maxLangCount = Math.max(...langCounts.map((l) => l.count), 1);
   const totalComponents = countSummaryEntries(summary?.component_counts ?? {});
   const insightsBySeverity = insights?.counts_by_severity ?? {};
-  const topInsights = sortFindings(insights?.insights ?? []).slice(0, 6);
+  const topInsights = sortFindings(insights?.insights ?? []).slice(0, 4);
   const degraded = isDegradedSummary(summary);
   const runtimeHighlights = summary?.runtime_dependency_highlights ?? [];
   const findings = summary?.top_findings ?? [];
@@ -267,7 +267,6 @@ export default function OverviewView({ project, scan, refreshKey }: OverviewView
               {scan.status}
             </span>
             <span className="chip chip-muted">{scan.file_count} files</span>
-            <span className="chip chip-muted">{scan.project_type}</span>
             {summary && (
               <span className={`badge ${confidenceClass(summary.confidence_summary.overall_label)}`}>
                 {summary.confidence_summary.overall_label} confidence
@@ -353,14 +352,13 @@ export default function OverviewView({ project, scan, refreshKey }: OverviewView
 
       <section className="intel-metric-row">
         <div className="intel-metric-card surface-panel-muted">
-          <span className="intel-metric-label">Routes mapped</span>
+          <span className="intel-metric-label">Coverage mapped</span>
           <span className="intel-metric-value">{summary?.route_counts.total ?? 0}</span>
-          <span className="intel-metric-sub">{routeMethodPairs.length > 0 ? routeMethodPairs.map(([method, count]) => `${method} ${count}`).join(" · ") : "No routed surface detected"}</span>
-        </div>
-        <div className="intel-metric-card surface-panel-muted">
-          <span className="intel-metric-label">Components profiled</span>
-          <span className="intel-metric-value">{totalComponents || scan.components.length}</span>
-          <span className="intel-metric-sub">{scan.components.length} discovered by scan</span>
+          <span className="intel-metric-sub">
+            {routeMethodPairs.length > 0
+              ? `${routeMethodPairs.map(([method, count]) => `${method} ${count}`).join(" · ")} · ${totalComponents || scan.components.length} components`
+              : `${totalComponents || scan.components.length} discovered components`}
+          </span>
         </div>
         <div className="intel-metric-card surface-panel-muted">
           <span className="intel-metric-label">Critical nodes</span>

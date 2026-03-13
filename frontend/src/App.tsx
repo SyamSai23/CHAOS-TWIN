@@ -1,4 +1,5 @@
 import {
+  useState,
   useRef,
 } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -6,6 +7,8 @@ import "@xyflow/react/dist/style.css";
 import "./App.css";
 
 import {
+  ArrowRight,
+  GitBranch,
   Plus,
   Upload,
   Play,
@@ -14,18 +17,23 @@ import {
 } from "lucide-react";
 
 import OverviewView from "./views/OverviewView";
+import HomeIntakeView from "./views/HomeIntakeView";
 import ArchitectureView from "./views/ArchitectureView";
 import ApiExplorerView from "./views/ApiExplorerView";
 import SequenceDiagramsView from "./views/SequenceDiagramsView";
 import DeepDiveView from "./views/DeepDiveView";
 import SimulationView from "./views/SimulationView";
-import { NAV_ITEMS } from "./app/navigation";
+import WorkspaceLandingView from "./views/WorkspaceLandingView";
+import { NAV_GROUPS, NAV_ITEMS, type NavItem } from "./app/navigation";
 import { useChaosTwinApp } from "./app/useChaosTwinApp";
+
+type IntakeIntent = "zip" | "github" | null;
 
 /* ── App ── */
 
 function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [entryIntent, setEntryIntent] = useState<IntakeIntent>(null);
   const {
     activeView,
     apiStatus,
@@ -76,25 +84,90 @@ function App() {
     toggleDeepDiveEdges,
   } = useChaosTwinApp();
   const activeNavItem = NAV_ITEMS.find((item) => item.key === activeView);
+  const selectedScan = selectedProjectId ? scans[selectedProjectId] || null : null;
+
+  function openCreateFormForIntent(intent: IntakeIntent) {
+    setEntryIntent(intent);
+    setShowCreateForm(true);
+  }
+
+  function handleStartZipIntake() {
+    setEntryIntent("zip");
+    if (selectedProjectId) {
+      fileInputRef.current?.click();
+      return;
+    }
+    setShowCreateForm(true);
+  }
+
+  function handleStartGithubIntake() {
+    setEntryIntent("github");
+    if (!selectedProjectId) {
+      setShowCreateForm(true);
+      return;
+    }
+    setActiveView("workspace");
+  }
+
+  function handleCancelCreate() {
+    cancelCreateForm();
+    setEntryIntent(null);
+  }
+
+  function handleSelectProject(projectId: string) {
+    setEntryIntent(null);
+    selectProject(projectId);
+  }
+
+  function navigateTo(view: NavItem) {
+    setActiveView(view);
+  }
 
   /* ── Render active view ── */
 
   function renderView() {
     if (!selectedProject || !selectedProjectId) {
       return (
-        <div className="view-empty">
-          <p className="view-empty-title">No project selected</p>
-          <p className="view-empty-sub">Select or create a project to get started.</p>
-        </div>
+        <HomeIntakeView
+          entryIntent={entryIntent}
+          projectCount={projects.length}
+          showCreateForm={showCreateForm}
+          onCreateProject={() => openCreateFormForIntent(entryIntent)}
+          onStartZip={handleStartZipIntake}
+          onStartGithub={handleStartGithubIntake}
+        />
       );
     }
 
     switch (activeView) {
+      case "workspace":
+        return (
+          <WorkspaceLandingView
+            project={selectedProject}
+            scan={selectedScan}
+            graph={graphs[selectedProjectId] || null}
+            refreshKey={projectRefreshKeys[selectedProjectId] || 0}
+            uploadMessage={uploadMessages[selectedProjectId] || null}
+            uploadedFilename={uploadedFilenames[selectedProjectId] || null}
+            uploading={uploading[selectedProjectId] || false}
+            scanning={scanning[selectedProjectId] || false}
+            generatingGraph={generatingGraph[selectedProjectId] || false}
+            graphMessage={graphMessages[selectedProjectId] || null}
+            entryIntent={entryIntent}
+            onNavigate={navigateTo}
+            onOpenComponent={(componentRoot) => void openDeepDive(selectedProjectId, componentRoot)}
+            onUploadZip={handleStartZipIntake}
+            onConnectGithub={handleStartGithubIntake}
+            onRunScan={() => void handleScan(selectedProjectId)}
+            onGenerateGraph={() => handleGenerateGraph(selectedProjectId)}
+          />
+        );
+
       case "overview":
         return (
           <OverviewView
             project={selectedProject}
-            scan={scans[selectedProjectId] || null}
+            scan={selectedScan}
             refreshKey={projectRefreshKeys[selectedProjectId] || 0}
           />
         );
@@ -104,7 +177,7 @@ function App() {
           <ReactFlowProvider>
             <ArchitectureView
               graph={graphs[selectedProjectId] || null}
-              scan={scans[selectedProjectId] || null}
+              scan={selectedScan}
               simResult={simResults[selectedProjectId] || null}
               ddSelectedRoot={ddSelectedRoot[selectedProjectId] || null}
               onNodeClick={(nodeId) => handleGraphNodeClick(selectedProjectId, nodeId)}
@@ -135,7 +208,7 @@ function App() {
       case "deep-dive":
         return (
           <DeepDiveView
-            scan={scans[selectedProjectId] || null}
+            scan={selectedScan}
             ddSelectedRoot={ddSelectedRoot[selectedProjectId] || null}
             ddResult={ddResults[selectedProjectId] || null}
             ddLoading={ddLoading[selectedProjectId] || false}
@@ -204,12 +277,15 @@ function App() {
               <div className="sidebar-label">Workspace</div>
               <span className="chip chip-muted">{projects.length} projects</span>
             </div>
+            <p className="sidebar-section-copy">
+              Start with a project shell, then attach source artifacts and run grounded scans.
+            </p>
             <div className="sidebar-project-list">
               {projects.map((p) => (
                 <button
                   key={p.id}
                   className={`sidebar-project-item${p.id === selectedProjectId ? " active" : ""}`}
-                  onClick={() => selectProject(p.id)}
+                  onClick={() => handleSelectProject(p.id)}
                 >
                   <span className="sidebar-project-name">{p.name}</span>
                   <span className="sidebar-project-date">
@@ -228,6 +304,11 @@ function App() {
                   </span>
                 </button>
               ))}
+              {projects.length === 0 && (
+                <div className="sidebar-list-empty">
+                  No projects yet. Create one to start the intake flow.
+                </div>
+              )}
             </div>
 
             {showCreateForm ? (
@@ -255,11 +336,18 @@ function App() {
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={cancelCreateForm}
+                    onClick={handleCancelCreate}
                   >
                     Cancel
                   </button>
                 </div>
+                <p className="sidebar-form-note">
+                  {entryIntent === "github"
+                    ? "This creates the project shell for the staged GitHub intake path. Repo auth and import are intentionally deferred until the backend flow is ready."
+                    : entryIntent === "zip"
+                      ? "This creates the project shell for ZIP intake. Attach the ZIP and run a scan from the intake section below."
+                      : "This creates the project shell only. Source import and scanning happen in the intake section below."}
+                </p>
                 {createError && (
                   <p className="text-error" style={{ fontSize: 12, marginTop: 2 }}>
                     {createError}
@@ -267,7 +355,7 @@ function App() {
                 )}
               </form>
             ) : (
-              <button className="sidebar-new-project" onClick={() => setShowCreateForm(true)}>
+              <button className="sidebar-new-project" onClick={() => openCreateFormForIntent(null)}>
                 <Plus size={14} />
                 New Project
               </button>
@@ -277,25 +365,41 @@ function App() {
           {selectedProjectId && (
             <div className="sidebar-section sidebar-nav">
               <div className="sidebar-section-head">
-                <div className="sidebar-label">Navigation</div>
+                <div className="sidebar-label">Understanding Flow</div>
               </div>
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.key}
-                  className={`sidebar-nav-item${activeView === item.key ? " active" : ""}`}
-                  onClick={() => setActiveView(item.key)}
-                >
-                  <item.icon size={16} />
-                  <span>{item.label}</span>
-                </button>
-              ))}
+              {NAV_GROUPS.map((group) => {
+                const visibleItems = group.items.filter((item) => !item.requiresScan || Boolean(selectedScan));
+                if (!visibleItems.length) {
+                  return null;
+                }
+                return (
+                  <div key={group.label} className="sidebar-nav-group">
+                    <div className="sidebar-nav-group-label">{group.label}</div>
+                    {visibleItems.map((item) => (
+                      <button
+                        key={item.key}
+                        className={`sidebar-nav-item${activeView === item.key ? " active" : ""}${item.key === "workspace" ? " is-primary" : ""}`}
+                        onClick={() => navigateTo(item.key)}
+                      >
+                        <item.icon size={16} />
+                        <span>{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           )}
 
           {selectedProjectId && (
             <div className="sidebar-section sidebar-actions">
               <div className="sidebar-section-head">
-                <div className="sidebar-label">Project Actions</div>
+                <div>
+                  <div className="sidebar-label">Intake</div>
+                  <p className="sidebar-section-copy sidebar-section-copy-tight">
+                    Import source, then scan. GitHub remains visible as the next intake path.
+                  </p>
+                </div>
               </div>
               <input
                 ref={fileInputRef}
@@ -304,45 +408,72 @@ function App() {
                 onChange={handleFileSelected}
                 style={{ display: "none" }}
               />
-              <button
-                className="btn btn-secondary btn-full"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading[selectedProjectId]}
-              >
-                <Upload size={14} />
-                {uploading[selectedProjectId] ? "Uploading…" : "Upload ZIP"}
-              </button>
-              <button
-                className="btn btn-primary btn-full"
-                onClick={() => handleScan(selectedProjectId)}
-                disabled={scanning[selectedProjectId]}
-              >
-                <Play size={14} />
-                {scanning[selectedProjectId] ? "Scanning…" : "Run Scan"}
-              </button>
-
-              {uploadMessages[selectedProjectId] && (
-                <p
-                  className={
-                    uploadMessages[selectedProjectId] === "Uploaded successfully"
-                      ? "text-success"
-                      : "text-error"
-                  }
-                  style={{ fontSize: 12 }}
+              <div className="sidebar-action-stack">
+                <button
+                  className="btn btn-secondary btn-full"
+                  onClick={handleStartZipIntake}
+                  disabled={uploading[selectedProjectId]}
                 >
-                  {uploadMessages[selectedProjectId]}
-                </p>
-              )}
-              {uploadedFilenames[selectedProjectId] && (
-                <p className="text-muted" style={{ fontSize: 11 }}>
-                  {uploadedFilenames[selectedProjectId]}
-                </p>
-              )}
-              {scanErrors[selectedProjectId] && (
-                <p className="text-error" style={{ fontSize: 12 }}>
-                  {scanErrors[selectedProjectId]}
-                </p>
-              )}
+                  <Upload size={14} />
+                  {uploading[selectedProjectId] ? "Uploading…" : "Upload ZIP"}
+                </button>
+                <button
+                  className="btn btn-primary btn-full"
+                  onClick={() => handleScan(selectedProjectId)}
+                  disabled={scanning[selectedProjectId]}
+                >
+                  <Play size={14} />
+                  {scanning[selectedProjectId] ? "Scanning…" : "Run Scan"}
+                </button>
+                <button type="button" className="sidebar-future-action" onClick={handleStartGithubIntake}>
+                  <span className="sidebar-future-action-main">
+                    <GitBranch size={14} />
+                    Connect GitHub
+                  </span>
+                  <span className="chip chip-muted">Staged</span>
+                </button>
+              </div>
+
+              <div className="sidebar-status-stack">
+                <div className="sidebar-status-card">
+                  <div className="sidebar-status-label-row">
+                    <span className="sidebar-status-label">Current flow</span>
+                    <ArrowRight size={12} />
+                    <span className="sidebar-status-value">Create project, upload ZIP, run scan</span>
+                  </div>
+                  <p className="sidebar-status-copy">
+                      After scan, the app opens into summary first, then architecture and components.
+                  </p>
+                </div>
+
+                {uploadMessages[selectedProjectId] && (
+                  <p
+                    className={
+                      uploadMessages[selectedProjectId] === "Uploaded successfully"
+                        ? "text-success"
+                        : "text-error"
+                    }
+                    style={{ fontSize: 12 }}
+                  >
+                    {uploadMessages[selectedProjectId]}
+                  </p>
+                )}
+                {uploadedFilenames[selectedProjectId] && (
+                  <p className="text-muted" style={{ fontSize: 11 }}>
+                    Latest upload: {uploadedFilenames[selectedProjectId]}
+                  </p>
+                )}
+                {entryIntent === "github" && (
+                  <p className="text-muted" style={{ fontSize: 11 }}>
+                    GitHub intake is staged honestly. Keep using the project shell and ZIP import until repo connection and sync are enabled.
+                  </p>
+                )}
+                {scanErrors[selectedProjectId] && (
+                  <p className="text-error" style={{ fontSize: 12 }}>
+                    {scanErrors[selectedProjectId]}
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </aside>
