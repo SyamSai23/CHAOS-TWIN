@@ -160,7 +160,12 @@ This repository includes a `render.yaml` manifest at the project root that confi
    - `DATABASE_URL` (your Postgres connection string)
    - `OPENAI_API_KEY`
 
-3. Optionally set `CHAOS_TWIN_CORS_ORIGINS` to the frontend origin (e.g. `https://<your-frontend>.onrender.com`) or set it to `*` for broad access.
+3. Configure CORS (frontend origin whitelist):
+   - Set `FRONTEND_ORIGINS` to your frontend URL, e.g. `https://<your-frontend>.onrender.com`.
+   - You can also provide a comma-separated list if you have multiple origins.
+   - If you want to allow all origins (not recommended for production), set `FRONTEND_ORIGINS` to `*`.
+
+   Note: When `FRONTEND_ORIGINS` is unset, the backend will still allow local development origins and will also permit `*.onrender.com` by default.
 
 4. Trigger a deploy; Render will build the backend and frontend using `render.yaml`.
 
