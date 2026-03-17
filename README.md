@@ -146,6 +146,26 @@ The frontend reads `frontend/.env` for local overrides.
 
 An example file is provided at `frontend/.env.example`.
 
+## Deploying to Render
+
+This repository includes a `render.yaml` manifest at the project root that configures two Render services:
+
+- **Backend**: a Python web service running FastAPI (uses `backend/requirements.txt`).
+- **Frontend**: a static site built with Vite from `frontend/` and published from `frontend/dist`.
+
+### Quick Render checklist
+
+1. Create a new Render account and link this repository.
+2. Add the required secrets in Render (Settings → Environment):
+   - `DATABASE_URL` (your Postgres connection string)
+   - `OPENAI_API_KEY`
+
+3. Optionally set `CHAOS_TWIN_CORS_ORIGINS` to the frontend origin (e.g. `https://<your-frontend>.onrender.com`) or set it to `*` for broad access.
+
+4. Trigger a deploy; Render will build the backend and frontend using `render.yaml`.
+
+> Note: Uploaded projects and extracted workspaces are stored on the instance filesystem (`uploads/` and `workspaces/`) and will not be persisted across redeploys.
+
 ## Local Data and Safety
 
 - `backend/.env` is local-only and ignored by git.

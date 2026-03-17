@@ -20,6 +20,11 @@ app = FastAPI(title="Chaos Twin API")
 
 def _allowed_origins() -> list[str]:
     configured = os.getenv("CHAOS_TWIN_CORS_ORIGINS", "")
+
+    # Allow a simple all-origins opt-in via `*` (use with care in production).
+    if "*" in [origin.strip() for origin in configured.split(",") if origin.strip()]:
+        return ["*"]
+
     extra = [origin.strip() for origin in configured.split(",") if origin.strip()]
     defaults = [
         "http://localhost:5173",

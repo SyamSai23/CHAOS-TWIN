@@ -1,0 +1,36 @@
+# Render deployment manifest for Chaos Twin
+# https://render.com/docs/deploying-with-render-yaml
+
+services:
+  - type: web_service
+    name: chaos-twin-backend
+    env: python
+    plan: starter
+    pythonVersion: "3.11"
+    # Render will set $PORT automatically
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromSecret: DATABASE_URL
+      - key: OPENAI_API_KEY
+        fromSecret: OPENAI_API_KEY
+      - key: CHAOS_TWIN_CORS_ORIGINS
+        value: "*"
+      - key: SQL_ECHO
+        value: "false"
+      - key: UPLOAD_DIR
+        value: "uploads"
+      - key: WORKSPACE_DIR
+        value: "workspaces"
+
+  - type: static_site
+    name: chaos-twin-frontend
+    env: node
+    plan: starter
+    nodeVersion: "20"
+    buildCommand: cd frontend && npm ci && npm run build
+    publishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: "https://chaos-twin-backend.onrender.com"
