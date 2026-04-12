@@ -1,48 +1,99 @@
 # Chaos Twin
 
-[//]: # (Repository note: keep this README aligned with the current local-first product scope and setup steps.)
+Chaos Twin is a codebase intelligence tool for junior developers.
 
-Understand your codebase, inspect request flows, and simulate failure impact locally.
+You upload a ZIP of a repository, Chaos Twin scans it locally, builds a structural model, indexes important files for semantic search, generates high-level project documentation, and exposes the result through a React frontend with dashboard, architecture, API explorer, understanding, and AI chat workflows.
 
-Chaos Twin is a local-first codebase intelligence workbench. You upload a repository archive, the backend produces deterministic scan artifacts, the frontend surfaces routes and architecture detail, and you can explore blast radius through graph-backed failure simulation.
+## What’s New
 
-## What It Does
+- Terra-style frontend with project landing, dashboard, understanding pages, and a floating AI Architect chat bubble.
+- Background indexing pipeline that classifies files, builds a dependency graph, summarizes important files, and stores pgvector embeddings.
+- Semantic project search endpoint powered by `text-embedding-3-small`.
+- AI-generated project understanding with:
+  - `project_story`
+  - `system_map`
+  - `data_journey`
+  - `key_decisions`
+  - `gotchas`
+  - `glossary`
+- Indexing status tracking and failure handling.
+- Understanding auto-recovery for stale generations.
+- Workspaces moved outside the backend directory to avoid dev-server reload loops.
+- Hard indexing cap of 500 source files per project to avoid runaway processing.
 
-- Detects languages, frameworks, entry points, components, routes, and infrastructure signals from an uploaded codebase.
-- Produces deterministic route-level request flow summaries directly on scan routes as `request_flow`.
-- Builds a canonical system model with stable IDs so downstream features can reuse consistent entities and relations.
-- Exposes project summary, insights, code-peek, graph, and simulation views from the latest scan.
-- Renders route details in the API Explorer with the direct request flow chain instead of requiring stored per-route analysis rows.
-- Keeps uploads, extracted workspaces, and local environment files on your machine.
+## Core Capabilities
 
-## Current Feature Set
+### 1. Scan and detect
 
-### Analysis pipeline
+Chaos Twin scans uploaded codebases and extracts:
 
-- ZIP upload and project-based scan workflow.
-- Deterministic scan enrichment for components, routes, infrastructure, and evidence.
-- Canonical model adapter in `backend/app/domain/system_model/` for stable project entities and relations.
-- On-demand system summary and insights derived from the latest scan artifacts.
-- Evidence-aware code peek for jumping from findings back to supporting files.
+- languages
+- frameworks
+- entry points
+- components
+- routes
+- infrastructure signals
+- imports and execution-flow evidence
 
-### API and route exploration
+This scan is deterministic and serves as the foundation for every downstream feature.
 
-- Route extraction across common backend patterns.
-- Request flow extraction attached directly to each route as `request_flow`.
-- API Explorer route detail view in the frontend.
-- Fallback path that can derive route analysis from the scan route even when `route_analyses` rows are absent.
+### 2. Build a code intelligence index
 
-### Graph and simulation
+After a scan completes, Chaos Twin starts a background indexing pipeline in `backend/app/services/file_indexer.py` that:
 
-- Graph generation from scan and canonical-backed artifacts.
-- Interactive graph UI with React Flow.
-- Failure simulation with graph edge semantics such as `uses`, `runs_on`, `contains`, and `connects_to`.
-- Summary of impacted components and blast radius from the selected failure point.
+- filters source files using `enry`
+- skips vendor, generated, binary, and documentation files
+- caps oversized files to a representative first/last-line window
+- classifies files with `gpt-4o-mini`
+- builds a dependency graph using `tree-sitter` with regex fallback
+- calculates importance scores
+- summarizes important files for junior developers
+- generates embeddings with `text-embedding-3-small`
+- stores results in PostgreSQL + pgvector
 
-### Validation tooling
+The indexing pipeline also powers later understanding generation.
 
-- Focused validators in `scripts/` for route extraction, route request flow, infrastructure detection, component detection, and evidence targeting.
-- Matrix evaluation script for running backend flow checks across multiple repository shapes.
+### 3. Generate project understanding
+
+Once indexing finishes, Chaos Twin generates a structured understanding model in `backend/app/services/understanding_generator.py`.
+
+This is the human-friendly layer of the product:
+
+- a plain-English project story
+- a system map of major components
+- a route-aware data journey
+- architectural decisions and tradeoffs
+- project-specific gotchas
+- a domain glossary
+
+If understanding generation gets stuck in `generating`, the backend can detect stale jobs and restart them.
+
+### 4. Search semantically
+
+Chaos Twin supports project-level semantic search:
+
+- query: “how does authentication work?”
+- retrieve matching files by vector similarity
+- boost results using importance score
+- show related dependency graph context for top hits
+
+Endpoint:
+
+- `GET /projects/{project_id}/search?q=...&limit=8`
+
+### 5. Explore through the UI
+
+The frontend includes:
+
+- Terra landing page
+- project dashboard
+- understanding page
+- architecture graph
+- API explorer
+- sequence diagrams
+- deep dive view
+- simulation view
+- context-aware AI Architect chat
 
 ## Tech Stack
 
@@ -51,8 +102,11 @@ Chaos Twin is a local-first codebase intelligence workbench. You upload a reposi
 - FastAPI
 - SQLAlchemy
 - PostgreSQL
-- Python 3.9+
-- `tree-sitter` and `tree-sitter-languages` for structured code parsing where needed
+- pgvector
+- OpenAI API
+- `tree-sitter`
+- `tree-sitter-languages`
+- `enry-python`
 
 ### Frontend
 
@@ -60,42 +114,84 @@ Chaos Twin is a local-first codebase intelligence workbench. You upload a reposi
 - TypeScript
 - Vite 7
 - `@xyflow/react`
+- `react-markdown`
+- `lucide-react`
 
 ### Local infrastructure
 
-- Docker Compose for PostgreSQL
-- Local filesystem storage for uploaded archives and extracted workspaces
+- Docker Compose
+- local ZIP storage
+- local extracted workspaces
 
 ## Repository Layout
 
 ```text
 chaos-twin/
 ├── backend/
+│   ├── alembic/
 │   ├── app/
+│   │   ├── config.py
 │   │   ├── db/
 │   │   ├── domain/system_model/
+│   │   ├── models/
 │   │   ├── routers/
+│   │   ├── schemas/
 │   │   └── services/
-│   └── requirements.txt
-├── docs/
+│   ├── requirements.txt
+│   └── .env.example
 ├── frontend/
-│   ├── public/
-│   └── src/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   └── views/
+│   ├── package.json
+│   └── index.html
 ├── sample-projects/
 ├── scripts/
 ├── docker-compose.yml
+├── workspaces/
 └── README.md
 ```
 
+## Data Model Added for Indexing
+
+Chaos Twin creates and uses these tables on startup:
+
+- `file_index`
+- `dependency_graph`
+- `indexing_status`
+
+It also enables:
+
+- `pgcrypto`
+- `vector`
+
+The `file_index` table stores:
+
+- file path
+- file type
+- domain area
+- summary
+- exports
+- key concepts
+- full content snapshot
+- line count
+- importance score
+- embedding
+
 ## Quick Start
 
-### 1. Start PostgreSQL
+### 1. Start PostgreSQL with pgvector
 
 From the repository root:
 
 ```bash
 docker compose up -d db
 ```
+
+This uses:
+
+- `pgvector/pgvector:pg16`
 
 ### 2. Start the backend
 
@@ -104,14 +200,19 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000 --reload-exclude 'workspaces/*'
+uvicorn app.main:app --reload --port 8000
 ```
 
-Backend endpoints:
+Important runtime note:
+
+- extracted workspaces now live in `../workspaces` relative to `backend/`
+- this prevents uvicorn/watchfiles reload loops during ZIP extraction
+
+Useful backend URLs:
 
 - API docs: `http://127.0.0.1:8000/docs`
-- Health: `http://127.0.0.1:8000/health`
-- Database health: `http://127.0.0.1:8000/health/db`
+- health: `http://127.0.0.1:8000/health`
+- db health: `http://127.0.0.1:8000/health/db`
 
 ### 3. Start the frontend
 
@@ -121,126 +222,183 @@ npm install
 npm run dev
 ```
 
-Frontend app:
+Frontend URL:
 
 - `http://localhost:5173`
 
-## Configuration
+## Environment Variables
 
-### Backend environment
+Backend configuration lives in `backend/.env`.
 
-Local backend configuration lives in `backend/.env` when you need to override defaults.
+An example file is included at [backend/.env.example](/Users/syamsaichippala/Projects/chaos-twin/backend/.env.example).
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@localhost:5432/chaostwin` | PostgreSQL connection string |
 | `SQL_ECHO` | `false` | Enable SQLAlchemy SQL logging |
-| `UPLOAD_DIR` | `uploads` | Directory for uploaded ZIP files |
-| `WORKSPACE_DIR` | `workspaces` | Directory for extracted repositories |
+| `UPLOAD_DIR` | `../uploads` | ZIP archive storage |
+| `WORKSPACE_DIR` | `../workspaces` | Extracted repository workspace storage |
+| `OPENAI_API_KEY` | empty | Required for semantic search, indexing, and AI features |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Default chat/completion model |
+| `FRONTEND_ORIGINS` | unset | Allowed frontend origins |
+| `CORS_ALLOW_CREDENTIALS` | `true` | CORS credentials toggle |
 
-### Frontend environment
-
-The frontend reads `frontend/.env` for local overrides.
+Frontend configuration:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | `http://127.0.0.1:8000` | Backend base URL |
 
-An example file is provided at `frontend/.env.example`.
+## Current Backend Routes
 
-## Deploying to Render
+### Project and health
 
-This repository includes a `render.yaml` manifest at the project root that configures two Render services:
+- `GET /health`
+- `GET /health/db`
+- `GET /projects`
+- `POST /projects`
+- `DELETE /projects/{project_id}`
 
-- **Backend**: a Python web service running FastAPI (uses `backend/requirements.txt`).
-- **Frontend**: a static site built with Vite from `frontend/` and published from `frontend/dist`.
+### Upload, scan, and indexing
 
-### Quick Render checklist
+- `POST /projects/{project_id}/upload`
+- `POST /projects/{project_id}/scan`
+- `GET /projects/{project_id}/scan`
+- `GET /projects/{project_id}/indexing-status`
+- `GET /projects/{project_id}/search`
 
-1. Create a new Render account and link this repository.
-2. Add the required secrets in Render (Settings → Environment):
-   - `DATABASE_URL` (your Postgres connection string)
-   - `OPENAI_API_KEY`
+### Understanding
 
-3. Configure CORS (frontend origin whitelist):
-   - Set `FRONTEND_ORIGINS` to your frontend URL, e.g. `https://<your-frontend>.onrender.com`.
-   - You can also provide a comma-separated list if you have multiple origins.
-   - If you want to allow all origins (not recommended for production), set `FRONTEND_ORIGINS` to `*`.
+- `GET /projects/{project_id}/understanding`
+- `POST /projects/{project_id}/understanding/generate`
+- `POST /projects/{project_id}/understanding/chat`
 
-   Note: When `FRONTEND_ORIGINS` is unset, the backend will still allow local development origins and will also permit `*.onrender.com` by default.
+### Additional exploration routes
 
-4. Trigger a deploy; Render will build the backend and frontend using `render.yaml`.
+- dashboard
+- graph generation
+- simulation
+- deep dive
+- routes
+- route analysis
+- sequence diagrams
+- code peek
+- system summary
+- insights
 
-> Note: Uploaded projects and extracted workspaces are stored on the instance filesystem (`uploads/` and `workspaces/`) and will not be persisted across redeploys.
+## Frontend Product Flow
 
-## Local Data and Safety
+### New project flow
+
+1. Create or upload a project from the Terra landing page.
+2. Upload a ZIP archive.
+3. Run scan.
+4. Indexing starts in the background.
+5. Understanding generation starts after indexing completes.
+6. Dashboard and understanding views update as processing finishes.
+
+### State persistence
+
+The frontend persists:
+
+- selected project id
+- active view
+
+This lets the app recover state across reloads.
+
+### Duplicate project handling
+
+If a user uploads a ZIP with the same project name twice, the UI can prompt to:
+
+- replace the old project
+- create a new one
+
+## Important Limits and Safeguards
+
+### Indexing hard cap
+
+Chaos Twin currently supports up to 500 source files per project for indexing.
+
+If more than 500 source files are extracted:
+
+- indexing aborts early
+- status is marked `failed`
+- a clear error message is stored in `indexing_status`
+- the frontend dashboard surfaces that failure
+
+### OpenAI concurrency limit
+
+To avoid OpenAI TPM spikes:
+
+- file classification and summarization batches are parallelized
+- concurrency is capped with a semaphore
+
+### Local artifact safety
+
+Ignored by git:
+
+- `.env`
+- local uploads
+- extracted workspaces
+- build output
+- local node/python environments
+
+Only example env files such as `.env.example` are tracked.
+
+## Development Notes
+
+### Why workspaces moved
+
+Extracted ZIPs are stored outside the backend tree:
+
+- old pattern: `backend/workspaces/`
+- current pattern: `../workspaces/`
+
+This prevents reload-triggered background task interruption in local dev.
+
+### Why indexing happens before understanding
+
+Understanding now depends on richer file context:
+
+- file summaries
+- dependency centrality
+- semantic selection of important files
+
+So the sequence is:
+
+1. scan
+2. index
+3. understanding
+
+### Search quality strategy
+
+Chaos Twin does not hardcode language-specific business rules for indexing.
+
+Instead it combines:
+
+- `enry` for source filtering
+- `tree-sitter` for import parsing where possible
+- regex fallback for unsupported languages
+- GPT classification and summarization based on actual code content
+
+## Local Safety
 
 - `backend/.env` is local-only and ignored by git.
-- `backend/uploads/` and `backend/workspaces/` are generated locally and ignored by git.
-- Frontend build output and `node_modules/` are ignored.
-- Sample archives under `sample-projects/` are intentionally kept; other ZIP outputs are ignored.
+- `workspaces/` is ignored by git.
+- uploaded ZIPs are stored locally.
+- build artifacts are ignored.
 
-This repository is designed to keep analysis artifacts local unless you explicitly export or commit them.
-
-## Development Workflow
-
-### Run the app locally
-
-1. Start Postgres with Docker Compose.
-2. Run the FastAPI backend.
-3. Run the Vite frontend.
-4. Create a project, upload a ZIP, and trigger analysis.
-
-### Run validation scripts
-
-From the repository root, after the backend environment is active:
-
-```bash
-python scripts/validate_route_extraction.py
-python scripts/validate_route_flow_extraction.py
-python scripts/validate_infrastructure_detection.py
-python scripts/validate_component_detection.py
-python scripts/validate_evidence_target_selection.py
-python scripts/validate_route_api_explorer.py
-python scripts/evaluate_backend_matrix.py
-```
-
-Use the validators selectively when you touch only one subsystem.
-
-## Implementation Notes
-
-- The canonical backend model is dataclass-based and dependency-light.
-- Stable IDs are reused or derived deterministically from canonical attributes.
-- Infrastructure detection is additive: it enriches scan data rather than introducing dedicated scan columns.
-- Route request flow extraction is intentionally conservative and avoids weak data-access guesses.
-- Summary and insights are currently on-demand views over the latest scan artifacts rather than separately persisted documents.
+This repository is designed for local-first analysis unless you explicitly deploy it elsewhere.
 
 ## Known Limitations
 
-- Sparse repositories can still produce an empty graph, which means simulation may be unavailable.
-- Some degraded fallback paths produce lower-confidence summaries than canonical-backed scans.
-- Route extraction has been hardened for more frameworks, but it remains heuristic and should be validated against unfamiliar repo layouts.
+- semantic search and AI features require `OPENAI_API_KEY`
+- indexing is capped at 500 source files
+- some route extraction and architecture inference is still heuristic
+- cloud deployments with ephemeral disks will not persist local uploads/workspaces unless extra storage is added
 
 ## License
 
 MIT License
 
 Copyright (c) 2026 Chaos Twin
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
