@@ -29,9 +29,62 @@ _LEGACY_SEQUENCE_INDEX = """
     WHERE route_id IS NOT NULL
 """
 
+_FILE_INDEX_SCHEMA_STATEMENTS = [
+    "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+    "CREATE EXTENSION IF NOT EXISTS vector",
+    """
+    CREATE TABLE IF NOT EXISTS file_index (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,
+        file_type TEXT NOT NULL,
+        domain_area TEXT,
+        summary TEXT,
+        exports JSONB DEFAULT '[]',
+        key_concepts JSONB DEFAULT '[]',
+        full_content TEXT,
+        line_count INTEGER,
+        importance_score FLOAT DEFAULT 0,
+        embedding vector(1536),
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(project_id, file_path)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS file_index_embedding_idx
+    ON file_index USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS dependency_graph (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,
+        imports JSONB DEFAULT '[]',
+        imported_by JSONB DEFAULT '[]',
+        UNIQUE(project_id, file_path)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS indexing_status (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'pending',
+        total_files INTEGER DEFAULT 0,
+        indexed_files INTEGER DEFAULT 0,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        error_message TEXT
+    )
+    """,
+]
+
 
 def initialize_schema() -> None:
     Base.metadata.create_all(bind=engine)
+
+    with engine.begin() as connection:
+        for statement in _FILE_INDEX_SCHEMA_STATEMENTS:
+            connection.execute(text(statement))
 
     if ENABLE_LEGACY_STARTUP_SCHEMA_PATCHES:
         apply_legacy_schema_patches(engine)

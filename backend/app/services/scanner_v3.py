@@ -16,6 +16,7 @@ from typing import Any, Optional
 from xml.etree import ElementTree
 
 import yaml  # PyYAML — already in requirements.txt
+import enry  # GitHub Linguist port for accurate language detection
 
 from app.services.component_detection import detect_components as detect_deterministic_components
 from app.services.infrastructure_detection import detect_infrastructure as detect_deterministic_infrastructure
@@ -30,7 +31,7 @@ IGNORED_DIRS: set[str] = {
     "node_modules", "__pycache__", ".git", "dist", "build", ".next",
     "venv", ".venv", "env", "__MACOSX", ".DS_Store", "coverage",
     ".pytest_cache", "target", "out", "bin", "obj", ".idea", ".vscode",
-    "workspaces", "uploads",
+    "workspaces", "uploads", "vendor", ".cache",
 }
 
 EXTENSION_TO_LANGUAGE: dict[str, str] = {
@@ -131,8 +132,44 @@ _TEXT_EXTENSIONS: set[str] = (
 # SECTION 2 — File System Walk
 # =====================================================================
 
+def _path_in_ignored_dir(rel_path: str) -> bool:
+    """Return True if any segment of the relative path is an ignored directory."""
+    parts = rel_path.replace("\\", "/").split("/")
+    return any(part in IGNORED_DIRS for part in parts)
+
+
+def _enry_detect_language(filepath: str, content: bytes) -> Optional[str]:
+    """Use enry (GitHub Linguist port) to detect file language.
+
+    Returns None if the file should be excluded from analysis
+    (vendored, generated, documentation, or binary).
+    """
+    if enry.is_vendor(filepath):
+        return None
+    if enry.is_generated(filepath, content):
+        return None
+    if enry.is_documentation(filepath):
+        return None
+    if enry.is_binary(content):
+        return None
+    lang = enry.get_language(filepath, content)
+    if not lang:
+        return None
+    # Normalize enry names to match our canonical language names
+    _ENRY_NORMALIZE: dict[str, str] = {
+        "TSX": "TypeScript",
+        "JSX": "JavaScript",
+        "SCSS": "CSS",
+        "Sass": "CSS",
+        "Less": "CSS",
+        "Makefile": "Shell",
+        "Dotenv": "Shell",
+    }
+    return _ENRY_NORMALIZE.get(lang, lang)
+
+
 def walk_files(root: str) -> list[dict]:
-    """Walk the directory tree and record every file."""
+    """Walk the directory tree, record every file, and tag with enry language."""
     inventory: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
@@ -141,11 +178,27 @@ def walk_files(root: str) -> list[dict]:
                 continue
             full = os.path.join(dirpath, fname)
             rel = os.path.relpath(full, root).replace("\\", "/")
+            # Belt-and-suspenders: skip any file whose path contains an ignored dir
+            if _path_in_ignored_dir(rel):
+                continue
             _, ext = os.path.splitext(fname)
             try:
                 size = os.path.getsize(full)
             except OSError:
                 size = 0
+
+            # Read raw bytes for enry analysis (cap at 1 MB)
+            raw_content = b""
+            if size < 1024 * 1024:
+                try:
+                    with open(full, "rb") as bf:
+                        raw_content = bf.read()
+                except OSError:
+                    pass
+
+            # Use enry for language detection + vendored/generated filtering
+            enry_lang = _enry_detect_language(rel, raw_content)
+
             line_count = 0
             if ext.lower() in _TEXT_EXTENSIONS and size < 2 * 1024 * 1024:
                 try:
@@ -158,6 +211,7 @@ def walk_files(root: str) -> list[dict]:
                 "extension": ext,
                 "size_bytes": size,
                 "line_count": line_count,
+                "enry_language": enry_lang,  # None = excluded by enry
             })
     return inventory
 
@@ -169,19 +223,34 @@ def walk_files(root: str) -> list[dict]:
 def detect_languages(
     files: list[dict],
 ) -> tuple[list[str], dict[str, float]]:
-    """Detect languages with confidence scoring.
+    """Detect languages using enry results stored on each file.
+
+    Uses the 'enry_language' field set during walk_files().
+    Falls back to extension-based detection only for files enry
+    could not classify (e.g. too large to read).
 
     Returns (language_names, confidence_dict).
     """
     lang_counts: dict[str, int] = defaultdict(int)
-    for f in files:
-        lang = EXTENSION_TO_LANGUAGE.get(f["extension"])
-        if lang:
-            lang_counts[lang] += 1
+    lang_lines: dict[str, int] = defaultdict(int)
 
+    for f in files:
+        lang = f.get("enry_language")
+        if not lang:
+            # enry returned None — file is vendored/generated/binary/unknown
+            continue
+        # Skip non-programming noise that enry still tags
+        if lang in ("JSON", "Markdown", "YAML", "TOML", "INI",
+                    "XML", "Text", "Ignore List", "Git Attributes",
+                    "EditorConfig", "Procfile", "Dockerfile",
+                    "Unix Assembly"):
+            continue
+        lang_counts[lang] += 1
+        lang_lines[lang] += f.get("line_count", 0)
+
+    # Also check marker files for framework ecosystem detection
     file_names: set[str] = {os.path.basename(f["path"]) for f in files}
     file_exts: set[str] = {f["extension"] for f in files}
-
     lang_has_marker: dict[str, bool] = {}
     for lang, markers in LANGUAGE_MARKERS.items():
         if lang == "C#":
@@ -192,29 +261,27 @@ def detect_languages(
     max_count = max(lang_counts.values()) if lang_counts else 1
     confidence: dict[str, float] = {}
 
-    all_langs = set(lang_counts.keys()) | {
-        l for l, has in lang_has_marker.items() if has
-    }
+    # Only score languages enry actually found files for.
+    # Markers boost score but CANNOT introduce a language with zero files.
+    all_langs = set(lang_counts.keys())
 
     for lang in all_langs:
         count = lang_counts.get(lang, 0)
         has_marker = lang_has_marker.get(lang, False)
+        lines = lang_lines.get(lang, 0)
 
-        if count < 3 and not has_marker:
-            continue
-        if lang == "JSON" and count < 5:
-            continue
-        if lang == "Markdown":
-            continue
-        if lang == "C#" and not lang_has_marker.get("C#", False):
+        # Require at least 2 files or a strong marker
+        if count < 2 and not has_marker:
             continue
 
         norm_count = min(count / max_count, 1.0) if max_count > 0 else 0.0
         score = (norm_count * 0.4) + (0.6 if has_marker else 0.0)
 
-        if score > 0.3:
+        if score > 0.2:
             confidence[lang] = round(min(score, 1.0), 2)
 
+    print(f"[scanner_v3] enry detected languages: {sorted(confidence.keys())}")
+    print(f"[scanner_v3] confidence scores: {confidence}")
     return sorted(confidence.keys()), confidence
 
 

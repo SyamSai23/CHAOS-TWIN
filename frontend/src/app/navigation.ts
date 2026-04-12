@@ -3,19 +3,21 @@ import {
   GitBranch,
   GitCommitHorizontal,
   LayoutDashboard,
-  Sparkles,
   Search,
   Zap,
+  BookOpen,
 } from "lucide-react";
 
 export type NavItem =
-  | "workspace"
-  | "overview"
+  | "landing"
+  | "dashboard"
+  | "understanding"
   | "architecture"
   | "api-explorer"
   | "sequence-diagrams"
   | "deep-dive"
-  | "simulation";
+  | "simulation"
+  | "workspace";  // kept for any legacy internal references
 
 export const NAV_GROUPS: {
   label: string;
@@ -24,28 +26,19 @@ export const NAV_GROUPS: {
     label: string;
     icon: typeof LayoutDashboard;
     requiresScan?: boolean;
+    comingSoon?: boolean;
   }[];
 }[] = [
   {
-    label: "Start Here",
+    label: "Explore",
     items: [
-      { key: "workspace", label: "Summary", icon: LayoutDashboard },
-      { key: "overview", label: "Evidence", icon: Sparkles, requiresScan: true },
-    ],
-  },
-  {
-    label: "Understand",
-    items: [
-      { key: "architecture", label: "Architecture", icon: GitBranch, requiresScan: true },
-      { key: "deep-dive", label: "Components", icon: Search, requiresScan: true },
-      { key: "api-explorer", label: "Routes", icon: Zap, requiresScan: true },
-      { key: "sequence-diagrams", label: "Sequences", icon: GitCommitHorizontal, requiresScan: true },
-    ],
-  },
-  {
-    label: "Go Deeper",
-    items: [
-      { key: "simulation", label: "Simulation", icon: Activity, requiresScan: true },
+      { key: "dashboard",        label: "Dashboard",        icon: LayoutDashboard },
+      { key: "understanding",    label: "Understanding",    icon: BookOpen },
+      { key: "architecture",     label: "Architecture",     icon: GitBranch,            requiresScan: true, comingSoon: true },
+      { key: "api-explorer",     label: "API Explorer",     icon: Zap,                  requiresScan: true, comingSoon: true },
+      { key: "sequence-diagrams",label: "Sequence Diagrams",icon: GitCommitHorizontal,  requiresScan: true, comingSoon: true },
+      { key: "deep-dive",        label: "Deep Dive",        icon: Search,               requiresScan: true, comingSoon: true },
+      { key: "simulation",       label: "Simulation",       icon: Activity,             requiresScan: true, comingSoon: true },
     ],
   },
 ];

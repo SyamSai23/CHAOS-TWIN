@@ -1,5 +1,7 @@
 # Chaos Twin
 
+[//]: # (Repository note: keep this README aligned with the current local-first product scope and setup steps.)
+
 Understand your codebase, inspect request flows, and simulate failure impact locally.
 
 Chaos Twin is a local-first codebase intelligence workbench. You upload a repository archive, the backend produces deterministic scan artifacts, the frontend surfaces routes and architecture detail, and you can explore blast radius through graph-backed failure simulation.
@@ -102,7 +104,7 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 --reload-exclude 'workspaces/*'
 ```
 
 Backend endpoints:

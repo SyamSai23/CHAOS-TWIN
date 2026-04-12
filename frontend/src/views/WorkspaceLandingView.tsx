@@ -465,7 +465,7 @@ export default function WorkspaceLandingView({
               <div className="intel-section-kicker">Keep in mind</div>
               <h3 className="workspace-signal-title">Important findings and cautions</h3>
             </div>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("overview")}>Open evidence</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("dashboard")}>Open evidence</button>
           </div>
           <div className="workspace-signal-columns">
             <div className="workspace-finding-list">
@@ -508,7 +508,7 @@ export default function WorkspaceLandingView({
           <div className="workspace-secondary-actions">
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("api-explorer")}><Zap size={14} /> View Routes</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("sequence-diagrams")}><Waypoints size={14} /> View Sequences</button>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("overview")}><Sparkles size={14} /> Review Evidence</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("dashboard")}><Sparkles size={14} /> Review Evidence</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("simulation")}><Play size={14} /> Run Simulation</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={onUploadZip} disabled={uploading}><FileCode2 size={14} /> {uploading ? "Uploading…" : "Refresh with ZIP"}</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={onConnectGithub}><GitBranch size={14} /> Connect GitHub</button>
