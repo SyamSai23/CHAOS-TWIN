@@ -344,3 +344,69 @@ class DeepDiveResponse(BaseModel):
     probable_start_file: Optional[str] = None
     probable_flow_steps: list[FlowStep]
     notes: list[str]
+
+
+class RoutePreview(BaseModel):
+    method: str
+    path: str
+    summary: str
+
+
+class LanguageStat(BaseModel):
+    name: str
+    percentage: float
+
+
+class ProjectInsights(BaseModel):
+    complexity: str
+    complexity_reason: str
+    entry_points: str
+    entry_points_detail: str
+    external_services: list[str]
+    external_services_detail: str
+    auth_summary: str
+
+
+class ProjectDashboardResponse(BaseModel):
+    project_name: str
+    executive_summary: str
+    languages: list[LanguageStat]
+    dependencies: list[str]
+    total_routes: int
+    total_files: int
+    components: list[str]
+    routes_preview: list[RoutePreview]
+    insights: Optional[ProjectInsights] = None
+
+
+class DashboardChatRequest(BaseModel):
+    messages: list[dict[str, str]]
+
+
+class DashboardChatResponse(BaseModel):
+    response: str
+
+
+class ProjectUnderstandingResponse(BaseModel):
+    id: str
+    project_id: str
+    status: str
+    project_story: Optional[str] = None
+    system_map: Optional[list[dict]] = None
+    data_journey: Optional[list[dict]] = None
+    key_decisions: Optional[list[dict]] = None
+    gotchas: Optional[list[dict]] = None
+    glossary: Optional[list[dict]] = None
+    generated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class UnderstandingChatRequest(BaseModel):
+    section: str
+    message: str
+    history: Optional[list[dict[str, str]]] = None
+
+
+class UnderstandingChatResponse(BaseModel):
+    response: str

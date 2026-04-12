@@ -2,6 +2,7 @@ import os
 import shutil
 import logging
 from typing import Optional
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -16,8 +17,10 @@ from app.models.graph_node import GraphNode
 from app.models.route_analysis import RouteAnalysis
 from app.models.sequence_diagram import SequenceDiagram
 from app.models.simulation_run import SimulationRun
+from app.models.project_understanding import ProjectUnderstanding
 from app.schemas import ScanResponse
 from app.services.project_model_storage import produce_project_model_snapshot
+from app.services.file_indexer import run_indexing_pipeline
 from app.services.scanner_v3 import extract_zip, unwrap_root_dir, run_full_scan
 
 router = APIRouter(prefix="/projects/{project_id}/scan", tags=["scans"])
@@ -46,7 +49,7 @@ def get_latest_scan(project_id: str, db: Session = Depends(get_db)):
     return scan
 
 @router.post("", response_model=ScanResponse, status_code=201)
-def scan_project(project_id: str, db: Session = Depends(get_db)):
+async def scan_project(project_id: str, db: Session = Depends(get_db)):
     # 1. Check project exists
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -105,6 +108,9 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
     )
     db.add(scan)
 
+    # Clear cached dashboard summary so it regenerates fresh against new scan data
+    project.executive_summary = None
+
     # Any graph-, simulation-, sequence-, or route-analysis data from an older
     # scan is stale once a new scan is accepted.
     db.query(SequenceDiagram).filter(SequenceDiagram.project_id == project_id).delete()
@@ -112,6 +118,13 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
     db.query(GraphEdge).filter(GraphEdge.project_id == project_id).delete()
     db.query(GraphNode).filter(GraphNode.project_id == project_id).delete()
     db.query(RouteAnalysis).filter(RouteAnalysis.project_id == project_id).delete()
+
+    understanding = db.query(ProjectUnderstanding).filter(ProjectUnderstanding.project_id == project_id).first()
+    if not understanding:
+        understanding = ProjectUnderstanding(project_id=project_id, status="pending")
+        db.add(understanding)
+    else:
+        understanding.status = "pending"
 
     db.commit()
     db.refresh(scan)
@@ -123,5 +136,17 @@ def scan_project(project_id: str, db: Session = Depends(get_db)):
             "Unexpected error while triggering canonical ProjectModel production for scan %s",
             scan.id,
         )
+
+    scan_dict = {
+        "project_name": project.name,
+        "files": scan.files,
+        "import_graph": scan.import_graph,
+        "dependencies": scan.dependencies,
+        "routes": scan.routes,
+        "components": scan.components,
+        "frameworks": scan.frameworks,
+        "languages": scan.languages,
+    }
+    asyncio.create_task(run_indexing_pipeline(project_id, upload.storage_path, scan_dict))
 
     return scan

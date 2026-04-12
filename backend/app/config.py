@@ -20,14 +20,16 @@ ENABLE_LEGACY_STARTUP_SCHEMA_PATCHES = os.getenv(
 
 def _resolve_storage_dir(env_name: str, default_dir: str) -> Path:
     raw_value = os.getenv(env_name, default_dir)
+    if env_name == "WORKSPACE_DIR" and raw_value.strip() in {"workspaces", "./workspaces"}:
+        raw_value = "../workspaces"
     candidate = Path(raw_value)
     if not candidate.is_absolute():
         candidate = BACKEND_DIR / candidate
     return candidate.resolve()
 
 
-UPLOAD_DIR = _resolve_storage_dir("UPLOAD_DIR", "uploads")
-WORKSPACE_DIR = _resolve_storage_dir("WORKSPACE_DIR", "workspaces")
+UPLOAD_DIR = _resolve_storage_dir("UPLOAD_DIR", "../uploads")
+WORKSPACE_DIR = _resolve_storage_dir("WORKSPACE_DIR", "../workspaces")
 
 # --- LLM / AI Brief settings ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type Dispatch,
@@ -29,13 +30,24 @@ import {
 } from "../api/client";
 import type { NavItem } from "./navigation";
 
+const PROJECT_ID_STORAGE_KEY = "chaos_twin_project_id";
+const ACTIVE_VIEW_STORAGE_KEY = "chaos_twin_active_view";
+
+type DuplicateProjectPrompt = {
+  file: File;
+  projectName: string;
+  existingProject: Project;
+};
+
 export function useChaosTwinApp() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<NavItem>("workspace");
+  const [activeView, setActiveView] = useState<NavItem>("landing");
   const [showCreateForm, setShowCreateForm] = useState(false);
 
   const [apiStatus, setApiStatus] = useState<string>("loading...");
   const [dbStatus, setDbStatus] = useState<string>("loading...");
+  const [apiStatusDetail, setApiStatusDetail] = useState<string>("Checking API health...");
+  const [dbStatusDetail, setDbStatusDetail] = useState<string>("Checking database health...");
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState("");
@@ -65,28 +77,65 @@ export function useChaosTwinApp() {
   const [ddErrors, setDdErrors] = useState<Record<string, string | null>>({});
   const [ddExpandEdges, setDdExpandEdges] = useState<Record<string, boolean>>({});
   const [projectRefreshKeys, setProjectRefreshKeys] = useState<Record<string, number>>({});
+  const [isCreatingProjectFromZip, setIsCreatingProjectFromZip] = useState(false);
+  const [newProjectUploadError, setNewProjectUploadError] = useState<string | null>(null);
+  const [duplicateProjectPrompt, setDuplicateProjectPrompt] = useState<DuplicateProjectPrompt | null>(null);
+  const didRestoreSelection = useRef(false);
 
   useEffect(() => {
-    fetchHealth()
-      .then((data) => setApiStatus(data.status))
-      .catch(() => setApiStatus("error"));
+    let cancelled = false;
 
-    fetchDbHealth()
-      .then((data) => setDbStatus(data.database))
-      .catch(() => setDbStatus("error"));
+    const pollHealth = async () => {
+      try {
+        const data = await fetchHealth();
+        if (!cancelled) {
+          setApiStatus(data.status);
+          setApiStatusDetail(data.status === "ok" ? "API is responding normally." : `API reported status: ${data.status}`);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setApiStatus("error");
+          setApiStatusDetail(error instanceof Error ? error.message : "API health check failed.");
+        }
+      }
 
+      try {
+        const data = await fetchDbHealth();
+        if (!cancelled) {
+          setDbStatus(data.database);
+          setDbStatusDetail(
+            data.database === "connected"
+              ? "Database connection is healthy."
+              : `Database health returned: ${data.database}`,
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDbStatus("error");
+          setDbStatusDetail(error instanceof Error ? error.message : "Database health check failed.");
+        }
+      }
+    };
+
+    void pollHealth();
+    const interval = window.setInterval(pollHealth, 30_000);
     void fetchProjects();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
-    if (projects.length > 0 && !selectedProjectId) {
-      setSelectedProjectId(projects[0].id);
+    if (selectedProjectId) {
+      localStorage.setItem(PROJECT_ID_STORAGE_KEY, selectedProjectId);
+      localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeView);
+      return;
     }
-
-    if (selectedProjectId && !projects.find((project) => project.id === selectedProjectId)) {
-      setSelectedProjectId(projects.length > 0 ? projects[0].id : null);
-    }
-  }, [projects, selectedProjectId]);
+    localStorage.removeItem(PROJECT_ID_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+  }, [activeView, selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId || selectedProjectId in scans) {
@@ -116,12 +165,40 @@ export function useChaosTwinApp() {
     if (!selectedProjectId) {
       return;
     }
-    if (!(scans[selectedProjectId] ?? null) && activeView !== "workspace") {
+    if (!(scans[selectedProjectId] ?? null) && activeView !== "workspace" && activeView !== "dashboard") {
       setActiveView("workspace");
     }
   }, [activeView, scans, selectedProjectId]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
+
+  useEffect(() => {
+    if (didRestoreSelection.current || projects.length === 0) {
+      return;
+    }
+    didRestoreSelection.current = true;
+    const savedProjectId = localStorage.getItem(PROJECT_ID_STORAGE_KEY);
+    const savedView = (localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) as NavItem | null) || "dashboard";
+    if (!savedProjectId) {
+      return;
+    }
+    const project = projects.find((item) => item.id === savedProjectId);
+    if (project) {
+      setSelectedProjectId(savedProjectId);
+      setActiveView(savedView);
+      return;
+    }
+    localStorage.removeItem(PROJECT_ID_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+  }, [projects]);
+
+  useEffect(() => {
+    if (selectedProject) {
+      document.title = `${selectedProject.name} — Chaos Twin`;
+      return;
+    }
+    document.title = "Chaos Twin";
+  }, [selectedProject]);
 
   async function fetchProjects() {
     try {
@@ -186,6 +263,11 @@ export function useChaosTwinApp() {
     clearProjectKey(setProjectRefreshKeys, projectId);
   }
 
+  function clearStoredProjectSelection() {
+    localStorage.removeItem(PROJECT_ID_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setCreateError(null);
@@ -195,7 +277,7 @@ export function useChaosTwinApp() {
       setName("");
       setPath("");
       setShowCreateForm(false);
-      setProjects((prev) => [...prev, newProject]);
+      setProjects((prev) => [newProject, ...prev.filter((project) => project.id !== newProject.id)]);
       setSelectedProjectId(newProject.id);
       setActiveView("workspace");
     } catch {
@@ -217,9 +299,85 @@ export function useChaosTwinApp() {
       await deleteProject(projectId);
       removeProjectState(projectId);
       setProjects((prev) => prev.filter((project) => project.id !== projectId));
+      if (selectedProjectId === projectId) {
+        clearStoredProjectSelection();
+        setSelectedProjectId(null);
+        setActiveView("landing");
+      }
     } catch (error) {
       alert(error instanceof Error ? error.message : "Failed to delete project");
     }
+  }
+
+  async function createProjectFromZip(file: File, options?: { replaceProjectId?: string }) {
+    const projectName = file.name.replace(/\.zip$/i, "");
+    setIsCreatingProjectFromZip(true);
+    setNewProjectUploadError(null);
+
+    try {
+      if (options?.replaceProjectId) {
+        await deleteProject(options.replaceProjectId);
+        removeProjectState(options.replaceProjectId);
+        setProjects((prev) => prev.filter((project) => project.id !== options.replaceProjectId));
+      }
+
+      const newProject = await createProject({ name: projectName, path: `/${projectName}` });
+      await uploadProjectZip(newProject.id, file);
+      const scanData = await runProjectScan(newProject.id);
+
+      setProjects((prev) => [newProject, ...prev.filter((project) => project.id !== newProject.id)]);
+      setScans((prev) => ({ ...prev, [newProject.id]: scanData }));
+      setSelectedProjectId(newProject.id);
+      setActiveView("dashboard");
+      return newProject;
+    } catch (error) {
+      setNewProjectUploadError(error instanceof Error ? error.message : "Failed to process upload");
+      throw error;
+    } finally {
+      setIsCreatingProjectFromZip(false);
+    }
+  }
+
+  async function promptForDuplicateProject(file: File) {
+    const projectName = file.name.replace(/\.zip$/i, "");
+    const existingProject = projects.find((project) => project.name.toLowerCase() === projectName.toLowerCase());
+    if (existingProject) {
+      setDuplicateProjectPrompt({ file, projectName, existingProject });
+      return;
+    }
+    await createProjectFromZip(file);
+  }
+
+  async function handleNewProjectFileSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    event.target.value = "";
+    try {
+      await promptForDuplicateProject(file);
+    } catch {
+      // Error state is already captured for the UI.
+    }
+  }
+
+  async function resolveDuplicateProjectChoice(choice: "replace" | "create_new") {
+    if (!duplicateProjectPrompt) {
+      return;
+    }
+    const { file, existingProject } = duplicateProjectPrompt;
+    setDuplicateProjectPrompt(null);
+    if (choice === "replace") {
+      await createProjectFromZip(file, { replaceProjectId: existingProject.id });
+      return;
+    }
+    await createProjectFromZip(file);
+  }
+
+  function switchProject() {
+    clearStoredProjectSelection();
+    setSelectedProjectId(null);
+    setActiveView("landing");
   }
 
   async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -385,7 +543,7 @@ export function useChaosTwinApp() {
 
   function selectProject(projectId: string) {
     setSelectedProjectId(projectId);
-    setActiveView("workspace");
+    setActiveView("dashboard");
   }
 
   function statusDotClass(value: string) {
@@ -394,23 +552,41 @@ export function useChaosTwinApp() {
     return "err";
   }
 
+  function addProjectToState(project: Project) {
+    setProjects((prev) => [project, ...prev.filter((item) => item.id !== project.id)]);
+  }
+
+  function registerScan(projectId: string, scanData: ScanResult) {
+    setScans((prev) => ({ ...prev, [projectId]: scanData }));
+  }
+
   return {
+    addProjectToState,
+    registerScan,
     activeView,
     apiStatus,
+    apiStatusDetail,
     createError,
+    clearStoredProjectSelection,
     dbStatus,
+    dbStatusDetail,
     ddErrors,
     ddExpandEdges,
     ddLoading,
     ddResults,
     ddSelectedRoot,
+    duplicateProjectPrompt,
     generatingGraph,
     graphMessages,
     graphs,
+    handleNewProjectFileSelected,
     name,
+    isCreatingProjectFromZip,
+    newProjectUploadError,
     path,
     projectRefreshKeys,
     projects,
+    resolveDuplicateProjectChoice,
     scanErrors,
     scanning,
     scans,
@@ -443,6 +619,7 @@ export function useChaosTwinApp() {
     setShowCreateForm,
     setSimulationNode,
     statusDotClass,
+    switchProject,
     toggleDeepDiveEdges,
   };
 }

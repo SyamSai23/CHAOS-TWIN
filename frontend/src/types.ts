@@ -7,6 +7,99 @@ export type Project = {
   created_at: string;
 };
 
+export type ProjectInsights = {
+  complexity: string;
+  complexity_reason: string;
+  entry_points: string;
+  entry_points_detail: string;
+  external_services: string[];
+  external_services_detail: string;
+  auth_summary: string;
+};
+
+export type DashboardChatResponse = {
+  response: string;
+};
+
+export type LanguageStat = {
+  name: string;
+  percentage: number;
+};
+
+export type RoutePreview = {
+  method: string;
+  path: string;
+  summary: string;
+};
+
+export type ProjectUnderstandingResponse = {
+  id: string;
+  project_id: string;
+  status: "pending" | "generating" | "partial" | "complete" | "failed";
+  project_story?: string;
+  system_map?: {
+    id: string;
+    name: string;
+    type: "backend" | "frontend" | "mobile" | "database" | "external" | "cache" | string;
+    description: string;
+    connects_to: string[];
+    key_files: string[];
+    color: "green" | "blue" | "purple" | "orange" | "red" | string;
+  }[];
+  data_journey?: {
+    step: number;
+    actor: string;
+    action: string;
+    detail: string;
+    type: "request" | "validation" | "processing" | "database" | "external" | "response" | string;
+  }[];
+  key_decisions?: {
+    title: string;
+    decision: string;
+    why: string;
+    tradeoff: string;
+    icon: string;
+  }[];
+  gotchas?: {
+    title: string;
+    description: string;
+    severity: "high" | "medium" | "low" | string;
+    affected: string[];
+  }[];
+  glossary?: {
+    term: string;
+    plain_english: string;
+    used_in: string[];
+  }[];
+  generated_at?: string;
+};
+
+export type UnderstandingChatResponse = {
+  response: string;
+};
+
+export type ProjectDashboardResponse = {
+  project_name: string;
+  executive_summary: string;
+  languages: LanguageStat[];
+  dependencies: string[];
+  total_routes: number;
+  total_files: number;
+  components: string[];
+  routes_preview: RoutePreview[];
+  insights?: ProjectInsights | null;
+};
+
+export type IndexingStatusResponse = {
+  status: "pending" | "indexing" | "complete" | "failed" | string;
+  total_files: number;
+  indexed_files: number;
+  percentage: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+};
+
 export type ScanComponent = {
   component_key: string;
   root_path: string;

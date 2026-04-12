@@ -12,6 +12,11 @@ import type {
   ScanResult,
   SimulationResult,
   SystemIntelligenceSummaryResponse,
+  ProjectDashboardResponse,
+  DashboardChatResponse,
+  ProjectUnderstandingResponse,
+  UnderstandingChatResponse,
+  IndexingStatusResponse,
 } from "../types";
 import type { SequenceData } from "../SequenceDiagram";
 
@@ -97,6 +102,44 @@ export async function runProjectScan(projectId: string): Promise<ScanResult> {
     method: "POST",
   });
   return parseResponse(response, "Scan failed");
+}
+
+export async function fetchProjectDashboard(projectId: string): Promise<ProjectDashboardResponse> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/dashboard`);
+  return parseResponse(response, "Failed to fetch project dashboard");
+}
+
+export async function fetchProjectIndexingStatus(projectId: string): Promise<IndexingStatusResponse> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/indexing-status`);
+  return parseResponse(response, "Failed to fetch indexing status");
+}
+
+export async function sendDashboardChatMessage(projectId: string, messages: {role: string, content: string}[]): Promise<DashboardChatResponse> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/dashboard/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  return parseResponse(response, "Failed to send chat message");
+}
+
+export async function fetchProjectUnderstanding(projectId: string): Promise<ProjectUnderstandingResponse> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/understanding`);
+  return parseResponse(response, "Failed to fetch project understanding");
+}
+
+export async function sendUnderstandingChatMessage(
+  projectId: string,
+  section: string,
+  message: string,
+  history: { role: string; content: string }[] = [],
+): Promise<UnderstandingChatResponse> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/understanding/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ section, message, history }),
+  });
+  return parseResponse(response, "Failed to send understanding chat message");
 }
 
 export async function fetchLatestProjectScan(projectId: string): Promise<ScanResult> {

@@ -30,6 +30,7 @@ frontend/dist/
 # Backend generated storage
 backend/uploads/
 backend/workspaces/
+workspaces/
 
 # Misc local artifacts
 *.zip
