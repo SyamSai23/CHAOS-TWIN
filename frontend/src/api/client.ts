@@ -45,8 +45,7 @@ export type RouteSequenceRecord = {
   created_at: string | null;
 };
 
-export const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+export const API_BASE = "https://chaos-twin-backend-updated.onrender.com";
 
 async function parseResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const body = await response.json().catch(() => null);
