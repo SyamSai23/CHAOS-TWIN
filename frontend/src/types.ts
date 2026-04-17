@@ -100,6 +100,19 @@ export type IndexingStatusResponse = {
   error_message: string | null;
 };
 
+export type StructureFile = {
+  path: string;
+  file_type: string;
+  language: string;
+  importance_score: number;
+  summary: string;
+  size_bytes: number;
+};
+
+export type StructureResponse = {
+  files: StructureFile[];
+};
+
 export type ScanComponent = {
   component_key: string;
   root_path: string;

@@ -1,6 +1,8 @@
 import shutil
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
@@ -14,12 +16,111 @@ from app.models.graph_edge import GraphEdge
 from app.models.route_analysis import RouteAnalysis
 from app.models.simulation_run import SimulationRun
 from app.models.sequence_diagram import SequenceDiagram
+from app.models.project_understanding import ProjectUnderstanding
 from app.schemas import ProjectCreate, ProjectResponse, ProjectDashboardResponse, DashboardChatRequest, DashboardChatResponse, RoutePreview, LanguageStat
+from app.services.ast_analyzer import infer_request_response
+from app.services.understanding_generator import generate_depth_tiers, understanding_has_depth_tiers
 
 from openai import AsyncOpenAI, OpenAI
 from app.config import OPENAI_API_KEY, OPENAI_MODEL
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+class FileEnrichBody(BaseModel):
+    file_path: str
+
+
+def _attach_feature_file_details(project_id: str, features: list[dict], db: Session) -> list[dict]:
+    file_paths: list[str] = []
+    seen: set[str] = set()
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        for path in feature.get("files", []):
+            if isinstance(path, str) and path not in seen:
+                seen.add(path)
+                file_paths.append(path)
+
+    file_lookup: dict[str, dict] = {}
+    if file_paths:
+        rows = db.execute(
+            text(
+                """
+                SELECT
+                    file_path,
+                    file_type,
+                    summary,
+                    importance_score
+                FROM file_index
+                WHERE project_id = :project_id
+                  AND file_path IN :paths
+                """
+            ).bindparams(bindparam("paths", expanding=True)),
+            {"project_id": project_id, "paths": file_paths},
+        ).mappings().all()
+        file_lookup = {
+            str(row["file_path"]): {
+                "path": str(row["file_path"]),
+                "file_type": str(row["file_type"] or "other"),
+                "summary": str(row["summary"] or "").strip(),
+                "importance_score": float(row["importance_score"] or 0),
+            }
+            for row in rows
+        }
+
+    enriched: list[dict] = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        files = [path for path in feature.get("files", []) if isinstance(path, str)]
+        feature_copy = dict(feature)
+        feature_copy["files_detail"] = [
+            file_lookup.get(
+                path,
+                {
+                    "path": path,
+                    "file_type": "other",
+                    "summary": "",
+                    "importance_score": 0.0,
+                },
+            )
+            for path in files
+        ]
+        enriched.append(feature_copy)
+    return enriched
+
+
+def _normalize_feature_path(path: str) -> str:
+    return str(path or "").replace("\\", "/").strip().rstrip("/")
+
+
+def _filename_only(path: str) -> str:
+    normalized = _normalize_feature_path(path)
+    if not normalized:
+        return ""
+    return normalized.split("/")[-1]
+
+
+def _route_keywords(route_path: str) -> list[str]:
+    normalized = str(route_path or "").strip().lower()
+    parts = [part for part in normalized.split("/") if part and not part.startswith(":")]
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        tokens = [token for token in re.split(r"[^a-z0-9]+", part) if token]
+        for token in tokens:
+            singular = token[:-1] if token.endswith("s") and len(token) > 3 else token
+            for candidate in (token, singular):
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    keywords.append(candidate)
+    return keywords
+
+
+def _ensure_file_index_ui_analysis_column(db: Session) -> None:
+    db.execute(text("ALTER TABLE file_index ADD COLUMN IF NOT EXISTS ui_analysis JSONB"))
+    db.commit()
 
 
 def _vector_literal(values: list[float]) -> str:
@@ -94,9 +195,37 @@ def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
     return project
 
 
-@router.get("", response_model=list[ProjectResponse])
+@router.get("")
 def list_projects(db: Session = Depends(get_db)):
-    return db.query(Project).order_by(Project.created_at.desc()).all()
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                p.id,
+                p.name,
+                p.path,
+                p.created_at,
+                COALESCE(fi.file_count, 0) AS file_count,
+                COALESCE(
+                    CASE ist.status
+                        WHEN 'complete' THEN 'completed'
+                        WHEN 'indexing' THEN 'running'
+                        ELSE ist.status
+                    END,
+                    'unknown'
+                ) AS status
+            FROM projects p
+            LEFT JOIN (
+                SELECT project_id, COUNT(*) AS file_count
+                FROM file_index
+                GROUP BY project_id
+            ) fi ON fi.project_id = p.id
+            LEFT JOIN indexing_status ist ON ist.project_id = p.id
+            ORDER BY p.created_at DESC
+            """
+        )
+    ).mappings().all()
+    return [dict(row) for row in rows]
 
 
 @router.get("/{project_id}/search")
@@ -107,6 +236,516 @@ async def search_project(project_id: str, q: str, limit: int = 8, db: Session = 
     if not q.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     return await semantic_search(project_id, q.strip(), max(1, min(limit, 20)), db)
+
+
+@router.get("/{project_id}/feature-map")
+async def get_project_feature_map(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    cached = db.execute(
+        text(
+            """
+            SELECT
+                features
+            FROM feature_map
+            WHERE project_id = :project_id
+            ORDER BY generated_at DESC
+            LIMIT 1
+            """
+        ),
+        {"project_id": project_id},
+    ).mappings().first()
+    if cached:
+        cached_features = cached["features"] if isinstance(cached["features"], list) else []
+        return {"features": _attach_feature_file_details(project_id, cached_features, db)}
+
+    file_rows = db.execute(
+        text(
+            """
+            SELECT
+                file_path,
+                file_type,
+                summary,
+                importance_score
+            FROM file_index
+            WHERE project_id = :project_id
+            ORDER BY importance_score DESC, file_path ASC
+            """
+        ),
+        {"project_id": project_id},
+    ).mappings().all()
+    if not file_rows:
+        return {"features": []}
+
+    dep_rows = db.execute(
+        text(
+            """
+            SELECT
+                file_path,
+                imports
+            FROM dependency_graph
+            WHERE project_id = :project_id
+            """
+        ),
+        {"project_id": project_id},
+    ).mappings().all()
+
+    file_lines = []
+    file_type_lookup: dict[str, str] = {}
+    importance_lookup: dict[str, float] = {}
+    for row in file_rows:
+        path = str(row["file_path"])
+        file_type = str(row["file_type"] or "other")
+        summary = str(row["summary"] or "").strip()
+        score = float(row["importance_score"] or 0)
+        file_type_lookup[path] = file_type
+        importance_lookup[path] = score
+        file_lines.append(f"{path} | {file_type} | {summary}")
+
+    edge_lines: list[str] = []
+    for row in dep_rows:
+        source = str(row["file_path"])
+        imports = row["imports"] or []
+        if not isinstance(imports, list):
+            continue
+        for target in imports:
+            if isinstance(target, str) and target.strip():
+                edge_lines.append(f"{source} -> {target}")
+
+    prompt = f"""You are helping a junior developer understand a codebase they just joined.
+
+This may be a complete full-stack app, a backend service, a frontend app, a microservice, or any partial codebase. Do not assume anything is missing — work with exactly what's here.
+
+Here are the source files:
+{chr(10).join(file_lines)}
+
+Here are the dependencies:
+{chr(10).join(edge_lines) if edge_lines else "No dependency edges found"}
+
+Group these files into 4-6 logical capabilities this code implements.
+Think: "what can this code DO?" not "what kind of app is this?"
+Name each capability in plain English from a junior developer's perspective.
+Every codebase — even a single microservice or frontend module — has distinct capabilities worth explaining.
+
+Return ONLY a JSON array, no markdown:
+[
+  {{
+    "name": "User Authentication",
+    "description": "One sentence: what this capability does",
+    "entry_point": "the most important file to start reading",
+    "files": ["path/to/file1", "path/to/file2"],
+    "importance": 0.95
+  }}
+]
+"""
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="Feature map generation failed: missing OpenAI API key")
+
+    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Return only valid JSON arrays."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        content = response.choices[0].message.content or "{}"
+        parsed = json.loads(content)
+        features = parsed if isinstance(parsed, list) else next(
+            (value for value in parsed.values() if isinstance(value, list)),
+            None,
+        )
+        if not isinstance(features, list):
+            raise ValueError("Model returned invalid feature-map JSON")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Feature map generation failed: {str(exc) or 'unknown OpenAI error'}",
+        ) from exc
+
+    max_importance = max(importance_lookup.values(), default=0.0)
+    enriched_features = []
+    for item in features:
+        if not isinstance(item, dict):
+            continue
+        files = [path for path in item.get("files", []) if isinstance(path, str)]
+        normalized_importance = float(item.get("importance", 0) or 0)
+        if normalized_importance > 1:
+            normalized_importance = normalized_importance / 100.0
+        if files and max_importance > 0:
+            derived = max((importance_lookup.get(path, 0.0) for path in files), default=0.0) / max_importance
+            normalized_importance = max(normalized_importance, derived)
+        enriched_features.append(
+            {
+                "name": str(item.get("name", "Untitled Feature")).strip(),
+                "description": str(item.get("description", "")).strip(),
+                "entry_point": str(item.get("entry_point", "")).strip(),
+                "files": files,
+                "importance": max(0.0, min(1.0, normalized_importance)),
+            }
+        )
+
+    db.execute(
+        text(
+            """
+            INSERT INTO feature_map (project_id, features)
+            VALUES (:project_id, CAST(:features AS jsonb))
+            """
+        ),
+        {"project_id": project_id, "features": json.dumps(enriched_features)},
+    )
+    db.commit()
+    return {"features": _attach_feature_file_details(project_id, enriched_features, db)}
+
+
+@router.post("/{project_id}/understanding/depth-tiers")
+async def generate_project_understanding_depth_tiers(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    understanding = (
+        db.query(ProjectUnderstanding)
+        .filter(ProjectUnderstanding.project_id == project_id)
+        .first()
+    )
+    if not understanding:
+        raise HTTPException(status_code=404, detail="Understanding not generated yet")
+
+    if understanding_has_depth_tiers(understanding):
+        return {"status": "cached"}
+
+    status = await generate_depth_tiers(project_id, db)
+    return {"status": status}
+
+
+@router.get("/{project_id}/api-explorer")
+def get_project_api_explorer(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    feature_row = db.execute(
+        text(
+            """
+            SELECT features
+            FROM feature_map
+            WHERE project_id = :project_id
+            ORDER BY generated_at DESC
+            LIMIT 1
+            """
+        ),
+        {"project_id": project_id},
+    ).mappings().first()
+
+    base_features = feature_row["features"] if feature_row and isinstance(feature_row["features"], list) else []
+    feature_list = _attach_feature_file_details(project_id, base_features, db)
+
+    feature_search_strings: dict[str, str] = {}
+    grouped_routes: dict[str, list[dict]] = {
+        str(feature.get("name") or "Untitled Feature"): []
+        for feature in feature_list
+        if isinstance(feature, dict)
+    }
+
+    for feature in feature_list:
+        if not isinstance(feature, dict):
+            continue
+        feature_name = str(feature.get("name") or "Untitled Feature")
+        searchable_parts = [
+            feature_name.lower(),
+            str(feature.get("description") or "").lower(),
+        ]
+        for file_detail in feature.get("files_detail", []):
+            if not isinstance(file_detail, dict):
+                continue
+            file_name = _filename_only(str(file_detail.get("path") or ""))
+            if file_name:
+                searchable_parts.append(file_name.lower())
+        feature_search_strings[feature_name] = " ".join(searchable_parts)
+
+    route_rows = (
+        db.query(RouteAnalysis)
+        .filter(RouteAnalysis.project_id == project_id)
+        .order_by(RouteAnalysis.method.asc(), RouteAnalysis.path.asc())
+        .all()
+    )
+
+    route_payloads: list[dict] = []
+    mode = "routes"
+    for route_row in route_rows:
+        analysis = route_row.analysis_data if isinstance(route_row.analysis_data, dict) else {}
+        route_payloads.append(
+            {
+                "route_id": str(route_row.route_id),
+                "method": str(route_row.method or analysis.get("method") or "GET").upper(),
+                "path": str(route_row.path or analysis.get("path") or ""),
+                "file": str(route_row.file or analysis.get("file") or ""),
+                "handler": analysis.get("handler_function"),
+                "complexity": str(analysis.get("complexity") or "simple"),
+                "has_database": bool(analysis.get("has_database", False)),
+                "has_external": bool(analysis.get("has_external", False)),
+                "parameters": analysis.get("parameters", []) if isinstance(analysis.get("parameters", []), list) else [],
+                "phases": analysis.get("phases", []) if isinstance(analysis.get("phases", []), list) else [],
+                "participants": analysis.get("participants", []) if isinstance(analysis.get("participants", []), list) else [],
+                "request_response": analysis.get("request_response") if isinstance(analysis.get("request_response"), dict) else None,
+            }
+        )
+
+    if not route_payloads:
+        mode = "entry_points"
+        fallback_rows = db.execute(
+            text(
+                """
+                SELECT file_path, file_type, summary, importance_score
+                FROM file_index
+                WHERE project_id = :project_id
+                  AND file_type IN ('entry_point', 'page', 'controller', 'route')
+                ORDER BY importance_score DESC, file_path ASC
+                LIMIT 20
+                """
+            ),
+            {"project_id": project_id},
+        ).mappings().all()
+        for row in fallback_rows:
+            file_path = str(row["file_path"] or "")
+            route_payloads.append(
+                {
+                    "route_id": file_path,
+                    "method": "ENTRY",
+                    "path": file_path,
+                    "file": file_path,
+                    "handler": _filename_only(file_path) or file_path,
+                    "complexity": "unknown",
+                    "has_database": False,
+                    "has_external": False,
+                    "parameters": [],
+                    "phases": [],
+                    "participants": [],
+                    "request_response": None,
+                    "summary": str(row["summary"] or "").strip(),
+                }
+            )
+
+    other_routes: list[dict] = []
+    for route_payload in route_payloads:
+        route_keywords = _route_keywords(route_payload["path"])
+        feature_name = None
+        best_score = 0
+
+        for candidate_feature, searchable in feature_search_strings.items():
+            score = sum(1 for keyword in route_keywords if keyword and keyword in searchable)
+            if score > best_score:
+                best_score = score
+                feature_name = candidate_feature
+
+        if feature_name and best_score > 0 and feature_name in grouped_routes:
+            grouped_routes[feature_name].append(route_payload)
+        else:
+            other_routes.append(route_payload)
+
+    response_features = [
+        {"name": feature_name, "routes": routes}
+        for feature_name, routes in grouped_routes.items()
+        if routes
+    ]
+    if other_routes:
+        response_features.append({"name": "Other", "routes": other_routes})
+
+    return {"mode": mode, "features": response_features}
+
+
+@router.post("/{project_id}/api-explorer/routes/{route_id}/enrich")
+async def enrich_api_explorer_route(project_id: str, route_id: str, db: Session = Depends(get_db)):
+    route_row = (
+        db.query(RouteAnalysis)
+        .filter(
+            RouteAnalysis.project_id == project_id,
+            RouteAnalysis.route_id == route_id,
+        )
+        .first()
+    )
+    if not route_row:
+        raise HTTPException(status_code=404, detail="Route analysis not found")
+
+    analysis = dict(route_row.analysis_data or {})
+    existing = analysis.get("request_response")
+    if isinstance(existing, dict):
+        return existing
+
+    try:
+        analysis_file = str(analysis.get("file") or route_row.file or "")
+        analysis_filename = _filename_only(analysis_file)
+
+        file_rows = db.execute(
+            text(
+                """
+                SELECT file_path, summary
+                FROM file_index
+                WHERE project_id = :project_id
+                """
+            ),
+            {"project_id": project_id},
+        ).mappings().all()
+
+        file_summary = ""
+        for row in file_rows:
+            file_path = str(row["file_path"] or "")
+            if _filename_only(file_path) == analysis_filename:
+                file_summary = str(row["summary"] or "").strip()
+                break
+
+        request_response = await infer_request_response(analysis, file_summary)
+        analysis["request_response"] = request_response
+        route_row.analysis_data = analysis
+        db.commit()
+        return request_response
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enrich request/response details: {str(exc) or 'unknown error'}",
+        ) from exc
+
+
+@router.post("/{project_id}/api-explorer/files/enrich")
+async def enrich_api_explorer_file(project_id: str, body: FileEnrichBody, db: Session = Depends(get_db)):
+    try:
+        _ensure_file_index_ui_analysis_column(db)
+
+        target_filename = _filename_only(body.file_path)
+        file_rows = db.execute(
+            text(
+                """
+                SELECT file_path, file_type, summary, ui_analysis
+                FROM file_index
+                WHERE project_id = :project_id
+                """
+            ),
+            {"project_id": project_id},
+        ).mappings().all()
+
+        matched_row = next(
+            (
+                row
+                for row in file_rows
+                if _filename_only(str(row["file_path"] or "")) == target_filename
+            ),
+            None,
+        )
+        if not matched_row:
+            raise HTTPException(status_code=404, detail="File index entry not found")
+
+        existing = matched_row["ui_analysis"]
+        if isinstance(existing, dict):
+            return existing
+
+        prompt = f"""You are helping a junior developer understand a UI screen/component they need to work on.
+
+File: {str(matched_row["file_path"] or "")}
+Type: {str(matched_row["file_type"] or "other")}
+Summary: {str(matched_row["summary"] or "").strip()}
+
+Based on this, infer:
+1. What data/props does this screen need to display?
+2. What user interactions does it handle?
+3. What does it produce or navigate to?
+
+Return ONLY a JSON object, no markdown:
+{{
+  "inputs": {{
+    "description": "One sentence: what this screen needs to work",
+    "fields": [
+      {{"field": "fieldName", "type": "string", "description": "what this is"}}
+    ]
+  }},
+  "interactions": {{
+    "description": "One sentence: what the user can do here",
+    "actions": [
+      {{"action": "button label or gesture", "description": "what happens"}}
+    ]
+  }},
+  "outputs": {{
+    "description": "One sentence: what this screen produces or where it leads"
+  }}
+}}
+"""
+
+        if not OPENAI_API_KEY:
+            raise HTTPException(status_code=500, detail="UI analysis unavailable: missing OpenAI API key")
+
+        openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Return only valid JSON objects."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        content = response.choices[0].message.content or "{}"
+        ui_analysis = json.loads(content)
+        if not isinstance(ui_analysis, dict):
+            raise ValueError("Model returned invalid UI analysis JSON")
+
+        db.execute(
+            text(
+                """
+                UPDATE file_index
+                SET ui_analysis = CAST(:ui_analysis AS jsonb)
+                WHERE project_id = :project_id
+                  AND file_path = :file_path
+                """
+            ),
+            {
+                "project_id": project_id,
+                "file_path": str(matched_row["file_path"] or ""),
+                "ui_analysis": json.dumps(ui_analysis),
+            },
+        )
+        db.commit()
+        return ui_analysis
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze UI file: {str(exc) or 'unknown error'}",
+        ) from exc
+
+
+@router.get("/{project_id}/sequence/{route_id}")
+def get_project_sequence(project_id: str, route_id: str, db: Session = Depends(get_db)):
+    route_row = (
+        db.query(RouteAnalysis)
+        .filter(
+            RouteAnalysis.project_id == project_id,
+            RouteAnalysis.route_id == route_id,
+        )
+        .first()
+    )
+    if not route_row:
+        raise HTTPException(status_code=404, detail="Route analysis not found")
+
+    analysis = route_row.analysis_data if isinstance(route_row.analysis_data, dict) else {}
+    return {
+        "method": str(analysis.get("method") or route_row.method or "GET").upper(),
+        "path": str(analysis.get("path") or route_row.path or ""),
+        "handler": analysis.get("handler_function"),
+        "complexity": str(analysis.get("complexity") or "simple"),
+        "participants": analysis.get("participants", []) if isinstance(analysis.get("participants", []), list) else [],
+        "phases": analysis.get("phases", []) if isinstance(analysis.get("phases", []), list) else [],
+        "has_database": bool(analysis.get("has_database", False)),
+        "has_external": bool(analysis.get("has_external", False)),
+    }
 
 
 @router.get("/{project_id}/indexing-status")
@@ -157,24 +796,18 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Delete related DB rows (order matters due to FK constraints)
-    # 1. sequence_diagrams (FK → projects, scans)
+    db.execute(text("DELETE FROM dependency_graph WHERE project_id = :project_id"), {"project_id": project_id})
+    db.execute(text("DELETE FROM file_index WHERE project_id = :project_id"), {"project_id": project_id})
+    db.execute(text("DELETE FROM indexing_status WHERE project_id = :project_id"), {"project_id": project_id})
+    db.execute(text("DELETE FROM feature_map WHERE project_id = :project_id"), {"project_id": project_id})
     db.query(SequenceDiagram).filter(SequenceDiagram.project_id == project_id).delete()
-    # 2. route_analyses (FK → projects, scans)
     db.query(RouteAnalysis).filter(RouteAnalysis.project_id == project_id).delete()
-    # 3. simulation_runs (FK → projects, scans, graph_nodes)
+    db.execute(text("DELETE FROM project_understanding WHERE project_id = :project_id"), {"project_id": project_id})
     db.query(SimulationRun).filter(SimulationRun.project_id == project_id).delete()
-    # 4. graph_edges (FK → graph_nodes)
     db.query(GraphEdge).filter(GraphEdge.project_id == project_id).delete()
-    # 5. graph_nodes (FK → scans)
     db.query(GraphNode).filter(GraphNode.project_id == project_id).delete()
-    # 6. scans (FK → uploads)
     db.query(Scan).filter(Scan.project_id == project_id).delete()
-
-    # 7. uploads
     db.query(Upload).filter(Upload.project_id == project_id).delete()
-
-    # 8. Delete the project itself
     db.delete(project)
     db.commit()
 

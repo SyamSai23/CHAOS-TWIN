@@ -76,6 +76,26 @@ _FILE_INDEX_SCHEMA_STATEMENTS = [
         error_message TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS feature_map (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        features JSONB NOT NULL,
+        generated_at TIMESTAMP DEFAULT NOW()
+    )
+    """,
+]
+
+_UNDERSTANDING_DEPTH_SCHEMA_STATEMENTS = [
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS project_story_beginner TEXT",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS project_story_intermediate TEXT",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS project_story_advanced TEXT",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS key_decisions_beginner JSONB",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS key_decisions_intermediate JSONB",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS key_decisions_advanced JSONB",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS gotchas_beginner JSONB",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS gotchas_intermediate JSONB",
+    "ALTER TABLE project_understanding ADD COLUMN IF NOT EXISTS gotchas_advanced JSONB",
 ]
 
 
@@ -84,6 +104,8 @@ def initialize_schema() -> None:
 
     with engine.begin() as connection:
         for statement in _FILE_INDEX_SCHEMA_STATEMENTS:
+            connection.execute(text(statement))
+        for statement in _UNDERSTANDING_DEPTH_SCHEMA_STATEMENTS:
             connection.execute(text(statement))
 
     if ENABLE_LEGACY_STARTUP_SCHEMA_PATCHES:

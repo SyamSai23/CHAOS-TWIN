@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import WORKSPACE_DIR
@@ -16,7 +18,7 @@ from app.models.scan import Scan
 from app.models.sequence_diagram import SequenceDiagram
 from app.models.upload import Upload
 from app.models.route_analysis import RouteAnalysis
-from app.services.ast_analyzer import RouteAnalyzer
+from app.services.ast_analyzer import RouteAnalyzer, infer_request_response
 from app.services.phrase_generator import PhraseGenerator
 from app.services.identity import make_route_id
 from app.services.route_analysis_utils import build_route_analysis_from_route, ensure_route_analysis_signature
@@ -131,6 +133,30 @@ def _enrich_with_phrases(analysis: dict, phrase_gen: PhraseGenerator) -> dict:
     return ensure_route_analysis_signature(analysis)
 
 
+def _attach_request_response(analysis: dict, project_id: str, db: Session) -> dict:
+    file_summary_row = db.execute(
+        text(
+            """
+            SELECT summary
+            FROM file_index
+            WHERE project_id = :project_id
+              AND file_path = :file_path
+            LIMIT 1
+            """
+        ),
+        {"project_id": project_id, "file_path": analysis.get("file", "")},
+    ).mappings().first()
+    file_summary = str((file_summary_row or {}).get("summary") or "").strip()
+
+    try:
+        analysis["request_response"] = asyncio.run(
+            infer_request_response(analysis, file_summary)
+        )
+    except Exception:
+        analysis["request_response"] = None
+    return ensure_route_analysis_signature(analysis)
+
+
 def _find_scan_route(scan: Scan, route_id: str) -> dict | None:
     for route in scan.routes or []:
         if not isinstance(route, dict):
@@ -167,6 +193,7 @@ def analyze_all_routes(project_id: str, db: Session = Depends(get_db)):
                 failed += 1
                 continue
             _enrich_with_phrases(result, phrase_gen)
+            _attach_request_response(result, project_id, db)
             _upsert_analysis(db, project_id, scan.id, result)
             route_ids.append(result["route_id"])
             analyzed += 1
@@ -195,6 +222,7 @@ def analyze_single_route(
 
     phrase_gen = PhraseGenerator()
     _enrich_with_phrases(result, phrase_gen)
+    _attach_request_response(result, project_id, db)
     _upsert_analysis(db, project_id, scan.id, result)
     db.commit()
     return result
@@ -257,6 +285,7 @@ def refresh_analyses(project_id: str, db: Session = Depends(get_db)):
                 failed += 1
                 continue
             _enrich_with_phrases(result, phrase_gen)
+            _attach_request_response(result, project_id, db)
             _upsert_analysis(db, project_id, scan.id, result)
             route_ids.append(result["route_id"])
             analyzed += 1

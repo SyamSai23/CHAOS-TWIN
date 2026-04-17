@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { FolderUp, GitBranch, Share2, Sparkles, Wand2, Box, PenTool, Loader2 } from "lucide-react";
-import type { Project } from "../types";
 import "./TerraLandingView.css";
 
 interface TerraLandingViewProps {
@@ -13,11 +12,10 @@ interface TerraLandingViewProps {
   handleCancelCreate: () => void;
   createError: string | null;
   isUploading: boolean;
-  projects: Project[];
   uploadError: string | null;
   entryIntent: "zip" | "github" | null;
-  onSelectProject: (projectId: string) => void;
   onUploadZip: () => void;
+  onManageProjects: () => void;
 }
 
 export default function TerraLandingView({
@@ -30,11 +28,10 @@ export default function TerraLandingView({
   handleCancelCreate,
   createError,
   isUploading,
-  projects,
   uploadError,
   entryIntent,
-  onSelectProject,
   onUploadZip,
+  onManageProjects,
 }: TerraLandingViewProps) {
   const [scrolled, setScrolled] = useState(false);
 
@@ -101,6 +98,28 @@ export default function TerraLandingView({
               )}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={onManageProjects}
+            style={{
+              marginTop: "14px",
+              background: "transparent",
+              border: "none",
+              color: "#74796e",
+              fontSize: "13px",
+              cursor: "pointer",
+              textDecoration: "none",
+              fontFamily: "'Nunito Sans', sans-serif",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.textDecoration = "underline";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.textDecoration = "none";
+            }}
+          >
+            Manage existing projects →
+          </button>
         </section>
 
         <section id="features" className="terra-sandbox-section">
@@ -151,43 +170,6 @@ processUser(data) {
           </div>
         </section>
 
-        {projects.length > 0 && (
-          <section style={{ marginTop: "10px", marginBottom: "56px" }}>
-            <div style={{ marginBottom: "18px" }}>
-              <div className="terra-badge" style={{ marginBottom: "10px" }}>
-                <Sparkles size={14} /> RECENT PROJECTS
-              </div>
-              <h2 style={{ margin: 0, fontFamily: "'Literata', serif", color: "#2e3230" }}>Switch back anytime</h2>
-            </div>
-            <div style={{ display: "grid", gap: "12px" }}>
-              {projects.slice(0, 6).map((project) => (
-                <button
-                  key={project.id}
-                  onClick={() => onSelectProject(project.id)}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    width: "100%",
-                    padding: "16px 18px",
-                    borderRadius: "18px",
-                    border: "1px solid rgba(46,50,48,0.08)",
-                    background: "#fff",
-                    color: "#2e3230",
-                    fontFamily: "inherit",
-                    cursor: "pointer",
-                    boxShadow: "0 6px 18px rgba(46,50,48,0.06)",
-                  }}
-                >
-                  <span style={{ fontWeight: 700 }}>{project.name}</span>
-                  <span style={{ fontSize: "0.85rem", color: "#6b736c" }}>
-                    Open
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
       </main>
 
       <section className="terra-brain-section">

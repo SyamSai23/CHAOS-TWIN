@@ -268,6 +268,11 @@ export function useChaosTwinApp() {
     localStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
   }
 
+  function navigateToPath(pathname: string) {
+    window.history.pushState({}, "", pathname);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setCreateError(null);
@@ -280,8 +285,8 @@ export function useChaosTwinApp() {
       setProjects((prev) => [newProject, ...prev.filter((project) => project.id !== newProject.id)]);
       setSelectedProjectId(newProject.id);
       setActiveView("workspace");
-    } catch {
-      setCreateError("Failed to create project");
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "Failed to create project");
     }
   }
 
@@ -313,6 +318,7 @@ export function useChaosTwinApp() {
     const projectName = file.name.replace(/\.zip$/i, "");
     setIsCreatingProjectFromZip(true);
     setNewProjectUploadError(null);
+    let currentStep = "creating project";
 
     try {
       if (options?.replaceProjectId) {
@@ -321,17 +327,29 @@ export function useChaosTwinApp() {
         setProjects((prev) => prev.filter((project) => project.id !== options.replaceProjectId));
       }
 
+      console.log("[upload] step 1: creating project...");
+      currentStep = "creating project";
       const newProject = await createProject({ name: projectName, path: `/${projectName}` });
+
+      console.log("[upload] step 2: uploading file...");
+      currentStep = "uploading file";
       await uploadProjectZip(newProject.id, file);
+
+      console.log("[upload] step 3: triggering scan...");
+      currentStep = "triggering scan";
       const scanData = await runProjectScan(newProject.id);
 
       setProjects((prev) => [newProject, ...prev.filter((project) => project.id !== newProject.id)]);
       setScans((prev) => ({ ...prev, [newProject.id]: scanData }));
       setSelectedProjectId(newProject.id);
       setActiveView("dashboard");
+      console.log("[upload] step 4: navigating to dashboard...");
+      navigateToPath(`/projects/${newProject.id}/dashboard`);
       return newProject;
     } catch (error) {
-      setNewProjectUploadError(error instanceof Error ? error.message : "Failed to process upload");
+      const errorMessage = error instanceof Error ? error.message : `Failed while ${currentStep}`;
+      console.error(`[upload] failed while ${currentStep}`, error);
+      setNewProjectUploadError(errorMessage);
       throw error;
     } finally {
       setIsCreatingProjectFromZip(false);
@@ -367,17 +385,22 @@ export function useChaosTwinApp() {
     }
     const { file, existingProject } = duplicateProjectPrompt;
     setDuplicateProjectPrompt(null);
-    if (choice === "replace") {
-      await createProjectFromZip(file, { replaceProjectId: existingProject.id });
-      return;
+    try {
+      if (choice === "replace") {
+        await createProjectFromZip(file, { replaceProjectId: existingProject.id });
+        return;
+      }
+      await createProjectFromZip(file);
+    } catch (error) {
+      console.error("[upload] duplicate project resolution failed", error);
     }
-    await createProjectFromZip(file);
   }
 
   function switchProject() {
     clearStoredProjectSelection();
     setSelectedProjectId(null);
-    setActiveView("landing");
+    setActiveView("projects");
+    navigateToPath("/projects");
   }
 
   async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {

@@ -1,9 +1,8 @@
 import {
-  useState,
+  useEffect,
   useRef,
+  useState,
 } from "react";
-import { ReactFlowProvider } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import "./App.css";
 
 import {
@@ -12,24 +11,78 @@ import {
 
 import ProjectDashboard from "./views/ProjectDashboard";
 import UnderstandingPage from "./views/UnderstandingPage";
+import FeatureMapPage from "./pages/FeatureMapPage";
+import ApiExplorerPage from "./pages/ApiExplorerPage";
+import SequenceDiagramPage from "./pages/SequenceDiagramPage";
+import ProjectsPage from "./pages/ProjectsPage";
 import TerraLandingView from "./views/TerraLandingView";
-import ArchitectureView from "./views/ArchitectureView";
-import ApiExplorerView from "./views/ApiExplorerView";
-import SequenceDiagramsView from "./views/SequenceDiagramsView";
-import DeepDiveView from "./views/DeepDiveView";
-import SimulationView from "./views/SimulationView";
-import WorkspaceLandingView from "./views/WorkspaceLandingView";
 import { NAV_GROUPS, NAV_ITEMS, type NavItem } from "./app/navigation";
 import { useChaosTwinApp } from "./app/useChaosTwinApp";
 
 type IntakeIntent = "zip" | "github" | null;
+type AppView = NavItem | "sequence";
 
-/* ── App ── */
+const ACTIVE_ROUTE_VIEWS: NavItem[] = ["projects", "dashboard", "understanding", "feature-map", "api-explorer"];
+
+function pathForView(view: AppView, projectId: string | null, routeId: string | null) {
+  if (view === "projects") {
+    return "/projects";
+  }
+  if (!projectId || view === "landing") {
+    return "/";
+  }
+  if (view === "sequence") {
+    return routeId ? `/projects/${projectId}/sequence/${routeId}` : `/projects/${projectId}/api-explorer`;
+  }
+  if (!ACTIVE_ROUTE_VIEWS.includes(view)) {
+    return "/";
+  }
+
+  const segments: Record<"dashboard" | "understanding" | "feature-map" | "api-explorer", string> = {
+    dashboard: "dashboard",
+    understanding: "understanding",
+    "feature-map": "feature-map",
+    "api-explorer": "api-explorer",
+  };
+
+  return `/projects/${projectId}/${segments[view as "dashboard" | "understanding" | "feature-map" | "api-explorer"]}`;
+}
+
+function parsePathname(pathname: string): { projectId: string | null; view: AppView; routeId: string | null } {
+  if (pathname === "/projects" || pathname === "/projects/") {
+    return { projectId: null, view: "projects", routeId: null };
+  }
+  const sequenceMatch = pathname.match(/^\/projects\/([^/]+)\/sequence\/([^/]+)\/?$/);
+  if (sequenceMatch) {
+    return { projectId: sequenceMatch[1], view: "sequence", routeId: sequenceMatch[2] };
+  }
+
+  const match = pathname.match(/^\/projects\/([^/]+)\/([^/]+)\/?$/);
+  if (!match) {
+    return { projectId: null, view: "landing", routeId: null };
+  }
+
+  const [, projectId, segment] = match;
+  const segmentToView: Record<string, NavItem> = {
+    dashboard: "dashboard",
+    understanding: "understanding",
+    "feature-map": "feature-map",
+    "api-explorer": "api-explorer",
+  };
+
+  const view = segmentToView[segment];
+  if (!view) {
+    return { projectId: null, view: "landing", routeId: null };
+  }
+
+  return { projectId, view, routeId: null };
+}
 
 function App() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const newProjectFileInputRef = useRef<HTMLInputElement>(null);
   const [entryIntent, setEntryIntent] = useState<IntakeIntent>(null);
+  const [sequenceRouteId, setSequenceRouteId] = useState<string | null>(null);
+
   const {
     activeView,
     apiStatus,
@@ -38,74 +91,58 @@ function App() {
     dbStatus,
     dbStatusDetail,
     duplicateProjectPrompt,
-    ddErrors,
-    ddExpandEdges,
-    ddLoading,
-    ddResults,
-    ddSelectedRoot,
-    generatingGraph,
-    graphMessages,
-    graphs,
     handleNewProjectFileSelected,
     name,
     isCreatingProjectFromZip,
     newProjectUploadError,
     path,
-    projectRefreshKeys,
-    projects,
     resolveDuplicateProjectChoice,
-    scanning,
-    scans,
     selectedProject,
     selectedProjectId,
     showCreateForm,
-    simErrors,
-    simResults,
-    simSelectedNode,
-    simulating,
-    uploadedFilenames,
-    uploading,
-    uploadMessages,
     cancelCreateForm,
-    clearSimulationResult,
-    handleFileSelected,
-    handleGenerateGraph,
-    handleGraphNodeClick,
-    handleScan,
-    handleSimulate,
     handleSubmit,
-    openDeepDive,
-    selectProject,
     setActiveView,
     setName,
     setPath,
-    setShowCreateForm,
-    setSimulationNode,
+    setSelectedProjectId,
     statusDotClass,
     switchProject,
-    toggleDeepDiveEdges,
   } = useChaosTwinApp();
-  const activeNavItem = NAV_ITEMS.find((item) => item.key === activeView);
+
+  const effectiveView: AppView = sequenceRouteId
+    ? "sequence"
+    : ACTIVE_ROUTE_VIEWS.includes(activeView)
+      ? activeView
+      : "landing";
+  const activeNavItem = NAV_ITEMS.find((item) => item.key === (effectiveView === "sequence" ? "api-explorer" : effectiveView));
   const projectId = selectedProjectId ?? "";
-  const selectedScan = projectId ? scans[projectId] || null : null;
 
-  function handleStartZipIntake() {
-    setEntryIntent("zip");
-    if (selectedProjectId) {
-      fileInputRef.current?.click();
-      return;
-    }
-    setShowCreateForm(true);
-  }
+  useEffect(() => {
+    const parsed = parsePathname(window.location.pathname);
+    setSelectedProjectId(parsed.projectId);
+    setSequenceRouteId(parsed.routeId);
+    setActiveView(parsed.view === "sequence" ? "api-explorer" : parsed.view);
+  }, [setActiveView, setSelectedProjectId]);
 
-  function handleStartGithubIntake() {
-    setEntryIntent("github");
-    if (!selectedProjectId) {
-      setShowCreateForm(true);
-      return;
+  useEffect(() => {
+    const handlePopState = () => {
+      const parsed = parsePathname(window.location.pathname);
+      setSelectedProjectId(parsed.projectId);
+      setSequenceRouteId(parsed.routeId);
+      setActiveView(parsed.view === "sequence" ? "api-explorer" : parsed.view);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [setActiveView, setSelectedProjectId]);
+
+  useEffect(() => {
+    const nextPath = pathForView(effectiveView, selectedProjectId, sequenceRouteId);
+    if (window.location.pathname !== nextPath) {
+      window.history.replaceState({}, "", nextPath);
     }
-    setActiveView("workspace");
-  }
+  }, [effectiveView, selectedProjectId, sequenceRouteId]);
 
   function handleCancelCreate() {
     cancelCreateForm();
@@ -113,6 +150,7 @@ function App() {
   }
 
   function navigateTo(view: NavItem) {
+    setSequenceRouteId(null);
     setActiveView(view);
   }
 
@@ -121,118 +159,63 @@ function App() {
     newProjectFileInputRef.current?.click();
   }
 
-  /* ── Render active view ── */
-
   function renderView() {
-    switch (activeView) {
-      case "workspace":
-        return (
-          <WorkspaceLandingView
-            project={selectedProject!}
-            scan={selectedScan}
-            graph={graphs[projectId] || null}
-            refreshKey={projectRefreshKeys[projectId] || 0}
-            uploadMessage={uploadMessages[projectId] || null}
-            uploadedFilename={uploadedFilenames[projectId] || null}
-            uploading={uploading[projectId] || false}
-            scanning={scanning[projectId] || false}
-            generatingGraph={generatingGraph[projectId] || false}
-            graphMessage={graphMessages[projectId] || null}
-            entryIntent={entryIntent}
-            onNavigate={navigateTo}
-            onOpenComponent={(componentRoot) => void openDeepDive(projectId, componentRoot)}
-            onUploadZip={handleStartZipIntake}
-            onConnectGithub={handleStartGithubIntake}
-            onRunScan={() => void handleScan(projectId)}
-            onGenerateGraph={() => handleGenerateGraph(projectId)}
-          />
-        );
-
-
+    switch (effectiveView) {
       case "dashboard":
         return (
-          <ProjectDashboard 
-            projectId={projectId} 
-            onNavigate={setActiveView} 
+          <ProjectDashboard
+            projectId={projectId}
+            onNavigate={setActiveView}
           />
         );
-
       case "understanding":
         return (
-          <UnderstandingPage 
-            projectId={projectId} 
+          <UnderstandingPage
+            projectId={projectId}
           />
         );
-
-      case "architecture":
+      case "feature-map":
         return (
-          <ReactFlowProvider>
-            <ArchitectureView
-              graph={graphs[projectId] || null}
-              scan={selectedScan}
-              simResult={simResults[projectId] || null}
-              ddSelectedRoot={ddSelectedRoot[projectId] || null}
-              onNodeClick={(nodeId) => handleGraphNodeClick(projectId, nodeId)}
-              onDeepDive={(root) => void openDeepDive(projectId, root)}
-              generatingGraph={generatingGraph[projectId] || false}
-              graphMessage={graphMessages[projectId] || null}
-              onGenerateGraph={() => handleGenerateGraph(projectId)}
-            />
-          </ReactFlowProvider>
+          <FeatureMapPage
+            projectId={projectId}
+          />
         );
-
       case "api-explorer":
         return (
-          <ApiExplorerView
+          <ApiExplorerPage
             projectId={projectId}
-            refreshKey={projectRefreshKeys[projectId] || 0}
           />
         );
-
-      case "sequence-diagrams":
-        return (
-          <SequenceDiagramsView
+      case "projects":
+        return <ProjectsPage />;
+      case "sequence":
+        return sequenceRouteId ? (
+          <SequenceDiagramPage
             projectId={projectId}
-            refreshKey={projectRefreshKeys[projectId] || 0}
+            routeId={sequenceRouteId}
           />
-        );
-
-      case "deep-dive":
-        return (
-          <DeepDiveView
-            scan={selectedScan}
-            ddSelectedRoot={ddSelectedRoot[projectId] || null}
-            ddResult={ddResults[projectId] || null}
-            ddLoading={ddLoading[projectId] || false}
-            ddError={ddErrors[projectId] || null}
-            ddExpandEdges={ddExpandEdges[projectId] || false}
-            onDeepDive={(root) => void openDeepDive(projectId, root)}
-            onToggleExpandEdges={() => toggleDeepDiveEdges(projectId)}
-            projectName={selectedProject!.name}
-          />
-        );
-
-      case "simulation":
-        return (
-          <SimulationView
-            graph={graphs[projectId] || null}
-            simSelectedNode={simSelectedNode[projectId] || ""}
-            simulating={simulating[projectId] || false}
-            simResult={simResults[projectId] || null}
-            simError={simErrors[projectId] || null}
-            onSelectNode={(nodeId) => setSimulationNode(projectId, nodeId)}
-            onSimulate={() => handleSimulate(projectId)}
-            onClear={() => clearSimulationResult(projectId)}
-          />
-        );
+        ) : null;
+      default:
+        return null;
     }
   }
 
-  /* ── Render ── */
+  const uploadInput = (
+    <input
+      ref={newProjectFileInputRef}
+      type="file"
+      accept=".zip"
+      onChange={(event) => {
+        void handleNewProjectFileSelected(event);
+      }}
+      style={{ display: "none" }}
+    />
+  );
 
-  if (!selectedProject || !selectedProjectId) {
+  if (effectiveView === "landing" || (effectiveView !== "projects" && (!selectedProject || !selectedProjectId))) {
     return (
       <>
+        {uploadInput}
         <TerraLandingView
           showCreateForm={showCreateForm}
           name={name}
@@ -243,11 +226,10 @@ function App() {
           handleCancelCreate={handleCancelCreate}
           createError={createError}
           isUploading={isCreatingProjectFromZip}
-          projects={projects}
           uploadError={newProjectUploadError}
           entryIntent={entryIntent}
-          onSelectProject={selectProject}
           onUploadZip={handleUploadNewProject}
+          onManageProjects={() => navigateTo("projects")}
         />
         {duplicateProjectPrompt && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(42, 47, 43, 0.32)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 120 }}>
@@ -287,9 +269,10 @@ function App() {
 
   return (
     <div className="layout">
+      {uploadInput}
       <header className="topbar">
         <div className="topbar-left">
-          <span className="topbar-page-name">{activeNavItem?.label ?? "Workspace"}</span>
+          <span className="topbar-page-name">{activeNavItem?.label ?? "Dashboard"}</span>
         </div>
         <div className="topbar-center">
           {selectedProject && (
@@ -315,72 +298,39 @@ function App() {
 
       <div className="layout-body">
         <aside className="sidebar">
-          {/* Logo / brand */}
-          <div style={{ padding: '20px 8px 16px', borderBottom: '1px solid rgba(196,200,188,0.3)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: '#4a7c59', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ padding: "20px 8px 16px", borderBottom: "1px solid rgba(196,200,188,0.3)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: "#4a7c59", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <Zap size={18} color="#fff" />
               </div>
-              <span style={{ fontFamily: "'Literata', serif", fontWeight: 700, fontSize: '1.15rem', color: '#2c332e' }}>
+              <span style={{ fontFamily: "'Literata', serif", fontWeight: 700, fontSize: "1.15rem", color: "#2c332e" }}>
                 Chaos Twin
               </span>
             </div>
           </div>
 
-          {/* Hidden file input still needed for internal scan actions */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".zip"
-            onChange={handleFileSelected}
-            style={{ display: "none" }}
-          />
-          <input
-            ref={newProjectFileInputRef}
-            type="file"
-            accept=".zip"
-            onChange={(event) => {
-              void handleNewProjectFileSelected(event);
-            }}
-            style={{ display: "none" }}
-          />
-
-          {/* Navigation items */}
-          <nav style={{ padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {NAV_GROUPS.flatMap(g => g.items)
-              .filter(item => !item.requiresScan || Boolean(selectedScan))
+          <nav style={{ padding: "12px 8px", display: "flex", flexDirection: "column", gap: 4 }}>
+            {NAV_GROUPS.flatMap((group) => group.items)
+              .filter((item) => ACTIVE_ROUTE_VIEWS.includes(item.key))
               .map((item) => {
-                const isComingSoon = item.comingSoon;
-                const isDisabled = !selectedProjectId || isComingSoon;
+                const isDisabled = item.key !== "projects" && !selectedProjectId;
                 return (
                   <button
                     key={item.key}
-                    className={`sidebar-nav-item${!isComingSoon && activeView === item.key ? " active" : ""}`}
-                    onClick={isComingSoon ? undefined : () => navigateTo(item.key)}
+                    className={`sidebar-nav-item${effectiveView === item.key ? " active" : ""}`}
+                    onClick={() => navigateTo(item.key)}
                     disabled={isDisabled}
-                    title={isComingSoon ? "Coming soon" : undefined}
                     style={{
-                      opacity: isComingSoon ? 0.38 : (!selectedProjectId ? 0.4 : 1),
-                      cursor: isComingSoon ? "default" : undefined,
+                      opacity: !selectedProjectId ? 0.4 : 1,
                     }}
                   >
                     <item.icon size={16} />
                     <span>{item.label}</span>
-                    {isComingSoon && (
-                      <span style={{
-                        marginLeft: 'auto',
-                        fontSize: '0.6rem',
-                        fontWeight: 600,
-                        letterSpacing: '0.04em',
-                        color: '#7a8a7e',
-                        textTransform: 'uppercase',
-                        opacity: 0.7,
-                      }}>Soon</span>
-                    )}
                   </button>
                 );
               })}
           </nav>
+
           <div style={{ marginTop: "auto", padding: "12px 8px 20px", borderTop: "1px solid rgba(196,200,188,0.3)" }}>
             <button
               className="sidebar-nav-item"
@@ -397,6 +347,7 @@ function App() {
           <div className="main-canvas-inner">{renderView()}</div>
         </main>
       </div>
+
       {duplicateProjectPrompt && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(42, 47, 43, 0.32)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 120 }}>
           <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 20, boxShadow: "0 18px 48px rgba(46,50,48,0.16)", padding: 28 }}>

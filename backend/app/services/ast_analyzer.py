@@ -9,12 +9,16 @@ zero pip dependencies.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Optional
 
+from openai import AsyncOpenAI
+
+from app.config import OPENAI_API_KEY
 from app.services.identity import make_route_id
 
 logger = logging.getLogger(__name__)
@@ -69,6 +73,67 @@ def _normalize_path(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "{}", path.rstrip("/")) or "/"
 
 
+async def infer_request_response(route_analysis: dict, file_summary: str) -> dict:
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required for request/response inference")
+
+    phases_summary = "\n".join(
+        f"- {phase.get('name') or phase.get('title') or 'Phase'}: {phase.get('description') or ''}".strip()
+        for phase in route_analysis.get("phases", [])
+        if isinstance(phase, dict)
+    ) or "- No execution phases available"
+
+    prompt = f"""You are helping a junior developer understand an API endpoint.
+
+Endpoint: {route_analysis.get('method', 'GET')} {route_analysis.get('path', '/')}
+Handler: {route_analysis.get('handler_function') or 'unknown'}
+Parameters already known: {json.dumps(route_analysis.get('parameters', []))}
+File summary: {file_summary}
+Execution phases: {phases_summary}
+
+Infer the most likely request body and response body for this endpoint.
+Think from a junior developer perspective — be clear and practical.
+
+Return ONLY a JSON object, no markdown:
+{{
+  "request": {{
+    "description": "One sentence: what this request does",
+    "body": [
+      {{"field": "fieldName", "type": "string", "required": true, "description": "what this field is"}}
+    ],
+    "notes": "Any important notes about the request (optional, null if none)"
+  }},
+  "response": {{
+    "description": "One sentence: what comes back",
+    "body": [
+      {{"field": "fieldName", "type": "string", "description": "what this field contains"}}
+    ],
+    "notes": "Any important notes about the response (optional, null if none)"
+  }}
+}}
+If the endpoint has no request body (e.g. GET requests), return an empty body array for request with a note explaining it.
+"""
+
+    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "Infer practical request and response shapes for API endpoints. Return only valid JSON objects.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.1,
+    )
+    content = response.choices[0].message.content or "{}"
+    parsed = json.loads(content)
+    if not isinstance(parsed, dict):
+        raise ValueError("Invalid request/response inference payload")
+    return parsed
+
+
 class RouteAnalyzer:
     """Analyzes route handlers using AST introspection."""
 
@@ -96,6 +161,132 @@ class RouteAnalyzer:
             return self._ts.analyze(route)
         except Exception:
             logger.exception("tree-sitter analysis failed for %s", route.get("file"))
+            return None
+
+    def _analyze_with_gpt(self, route: dict) -> dict | None:
+        """
+        GPT-powered route analysis fallback.
+        Used when AST/tree-sitter analysis fails to find the handler.
+        Works for any language or framework.
+        """
+        import asyncio
+        import json
+        import re as re_module
+        import requests as req_lib
+
+        method = route.get("method", "GET").upper()
+        path = route.get("path", "/")
+        file_rel = route.get("file", "")
+        print(f"[ast_analyzer] GPT fallback triggered for {method} {path} in {file_rel}")
+        component = route.get("component", "unknown")
+        handler_name = route.get("handler", "")
+        rid = make_route_id(method, path, file_rel)
+
+        # Read file content
+        file_path = self._ws / file_rel
+        if not file_path.exists():
+            return None
+
+        try:
+            content = file_path.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            return None
+
+        try:
+            prompt_text = f"""You are analyzing source code to explain an API endpoint to a junior developer.
+
+Endpoint: {method} {path}
+Handler: {handler_name}
+File: {file_rel}
+
+File content:
+{content[:15000]}
+
+Trace exactly what happens when this endpoint is called, step by step.
+Be specific — name the actual functions called, database operations, external service calls.
+Write for a junior developer who needs to understand this code for the first time.
+
+Return ONLY a JSON object, no markdown:
+{{
+  "handler_function": "exact function or method name that handles this route",
+  "complexity": "simple|moderate|complex",
+  "has_database": true,
+  "has_external": false,
+  "has_filesystem": false,
+  "participants": [
+    {{"id": "client", "label": "Client", "type": "client"}},
+    {{"id": "handler", "label": "HandlerName()", "type": "component"}},
+    {{"id": "database", "label": "Database", "type": "database"}}
+  ],
+  "phases": [
+    {{
+      "phase_id": "validation",
+      "name": "Validation",
+      "color": "orange",
+      "description": "Plain English: what validation happens",
+      "steps": [
+        {{
+          "step_id": "s1",
+          "type": "conditional",
+          "label": "Check authentication token",
+          "technical": "auth.verify_token()",
+          "line_number": 0,
+          "is_error_path": false
+        }}
+      ]
+    }}
+  ],
+  "error_paths": [],
+  "parameters": []
+}}
+
+Step types must be one of: db_read, db_write, service_call, external, conditional, response, filesystem
+Participant types must be one of: client, component, database, external
+Include 2-4 phases that tell the complete story of what this endpoint does.
+"""
+            print(f"[ast_analyzer] calling OpenAI for {method} {path}")
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "gpt-4o",
+                "max_tokens": 2000,
+                "messages": [{"role": "user", "content": prompt_text}]
+            }
+            http_response = req_lib.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            http_response.raise_for_status()
+            print(f"[ast_analyzer] OpenAI responded for {method} {path}")
+
+            raw = http_response.json()["choices"][0]["message"]["content"].strip()
+            raw = re_module.sub(r'```json|```', '', raw).strip()
+            result = json.loads(raw)
+
+            if not isinstance(result, dict):
+                return None
+
+            # Ensure required fields
+            result['route_id'] = rid
+            result['method'] = method
+            result['path'] = path
+            result['file'] = file_rel
+            result['component'] = component
+
+            logger.info("GPT fallback analysis succeeded for %s %s", method, path)
+            return result
+
+        except json.JSONDecodeError as e:
+            print(f"[ast_analyzer] JSON decode error for {method} {path}: {e}")
+            return None
+        except Exception as e:
+            import traceback
+            print(f"[ast_analyzer] GPT fallback exception for {method} {path}: {e}")
+            print(traceback.format_exc())
             return None
 
     # ── Public API ──────────────────────────────────────────────────
@@ -129,6 +320,10 @@ class RouteAnalyzer:
         handler = self._find_handler(tree, method, path)
         if handler is None:
             logger.warning("No handler found for %s %s in %s", method, path, file_rel)
+            # Try GPT fallback before giving up
+            gpt_result = self._analyze_with_gpt(route)
+            if gpt_result is not None:
+                return gpt_result
             return self._empty_analysis(rid, method, path, file_rel, component)
 
         # Step 2: extract signature

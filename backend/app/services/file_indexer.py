@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import posixpath
 import re
@@ -21,12 +22,18 @@ from tree_sitter_languages import get_parser
 from app.config import OPENAI_API_KEY, WORKSPACE_DIR
 from app.db.session import SessionLocal
 from app.models.project import Project
+from app.models.scan import Scan
 from app.models.upload import Upload
+from app.routers.analyze import _enrich_with_phrases, _upsert_analysis
+from app.services.ast_analyzer import RouteAnalyzer
+from app.services.phrase_generator import PhraseGenerator
 from app.services.scanner_v3 import unwrap_root_dir
 from app.services.understanding_generator import generate_understanding_backend
 
-_openai_semaphore = asyncio.Semaphore(3)
+_openai_semaphore = asyncio.Semaphore(5)
 MAX_INDEXABLE_SOURCE_FILES = 500
+MAX_PRIORITIZED_SOURCE_FILES = 150
+SUMMARIZATION_BATCH_SIZE = 20
 
 TREE_SITTER_SUPPORTED = {
     ".py": "python",
@@ -64,12 +71,17 @@ CLASSIFICATION_ALLOWED_TYPES = {
     "model",
     "service",
     "middleware",
+    "page",
+    "component",
+    "hook",
+    "store",
     "config",
-    "utility",
+    "util",
     "test",
-    "migration",
+    "style",
     "other",
 }
+VALID_TYPES = CLASSIFICATION_ALLOWED_TYPES
 
 CLASSIFICATION_ALLOWED_DOMAINS = {
     "auth",
@@ -83,6 +95,8 @@ CLASSIFICATION_ALLOWED_DOMAINS = {
     "core",
     "other",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def _client() -> AsyncOpenAI:
@@ -171,6 +185,169 @@ async def extract_source_files(zip_path: str) -> dict[str, dict[str, Any]]:
     return file_index
 
 
+async def prioritize_source_files(
+    file_index: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    def is_likely_test_file(path: str) -> bool:
+        path_lower = path.lower()
+        parts = path_lower.replace("\\", "/").split("/")
+        filename = parts[-1]
+
+        immediate_parent = parts[-2] if len(parts) >= 2 else ""
+        if immediate_parent in ["__tests__", "tests", "specs", "__mocks__", "mocks", "fixtures", "e2e"]:
+            return True
+
+        if any(
+            filename.endswith(ext)
+            for ext in [
+                ".test.ts",
+                ".test.tsx",
+                ".test.js",
+                ".test.jsx",
+                ".spec.ts",
+                ".spec.tsx",
+                ".spec.js",
+                ".spec.jsx",
+                ".test.py",
+                ".spec.py",
+            ]
+        ):
+            return True
+
+        if any(
+            filename.endswith(ext)
+            for ext in [
+                ".min.js",
+                ".min.css",
+                ".map",
+                ".snap",
+                "package-lock.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+            ]
+        ):
+            return True
+
+        return False
+
+    source_paths = list(file_index.keys())
+    non_test_paths = [path for path in source_paths if not is_likely_test_file(path)]
+    test_paths = [path for path in source_paths if is_likely_test_file(path)]
+    logger.info(
+        f"[indexer] pre-filtered {len(test_paths)} test/generated files, "
+        f"{len(non_test_paths)} source files remain"
+    )
+
+    filtered_file_index = {path: file_index[path] for path in non_test_paths}
+    total_files = len(filtered_file_index)
+    if total_files <= MAX_PRIORITIZED_SOURCE_FILES:
+        return filtered_file_index
+
+    print(
+        f"[indexer] {total_files} files found, running prioritization to select top "
+        f"{MAX_PRIORITIZED_SOURCE_FILES}"
+    )
+
+    try:
+        client = _client()
+        all_paths = list(filtered_file_index.keys())
+        prompt = f"""You are helping analyze a software codebase for a junior developer.
+
+Here is the complete file tree:
+{chr(10).join(all_paths)}
+
+Select the {MAX_PRIORITIZED_SOURCE_FILES} most important files for understanding this codebase.
+
+Prioritize in this order:
+1. Entry points (main files, app files, server files, index files at root level)
+2. Route definitions and URL mappings
+3. Controllers and request handlers
+4. Core business logic and services
+5. Data models and schemas
+6. Configuration files (package.json, requirements.txt, docker-compose.yml etc)
+7. Key frontend pages and components
+
+Deprioritize:
+- Test files (*test*, *spec*, __tests__)
+- Generated files (*.min.js, dist/, build/, .next/)
+- Vendor/dependency files (node_modules/, vendor/)
+- Style files (*.css, *.scss) unless very few exist
+- Asset files (images, fonts, icons)
+- Lock files (package-lock.json, yarn.lock)
+
+Return ONLY a JSON array of file paths from the provided list. Do not invent paths.
+Return exactly {MAX_PRIORITIZED_SOURCE_FILES} paths or fewer if the total is under {MAX_PRIORITIZED_SOURCE_FILES}.
+"""
+
+        async with _openai_semaphore:
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You rank codebase files by importance. Return only valid JSON arrays of file paths from the provided list.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+            )
+
+        payload = response.choices[0].message.content or "[]"
+        selected_paths_raw = _extract_json_array(payload)
+        selected_paths: list[str] = []
+        if not selected_paths_raw:
+            try:
+                parsed = json.loads(payload)
+                if isinstance(parsed, list):
+                    selected_paths = [str(item).strip() for item in parsed if isinstance(item, str)]
+            except json.JSONDecodeError:
+                selected_paths = []
+
+        logger.debug(f"[indexer] GPT returned sample paths: {selected_paths[:5]}")
+        logger.debug(f"[indexer] Source file sample paths: {all_paths[:5]}")
+
+        normalized_source: dict[str, str] = {}
+        for path in all_paths:
+            key = path.lstrip("/").replace("\\", "/").lower()
+            normalized_source[key] = path
+
+        matched_paths: list[str] = []
+        seen: set[str] = set()
+        for gpt_path in selected_paths:
+            normalized_gpt = gpt_path.lstrip("/").replace("\\", "/").lower()
+            if normalized_gpt in normalized_source:
+                original = normalized_source[normalized_gpt]
+                if original not in seen:
+                    matched_paths.append(original)
+                    seen.add(original)
+                continue
+
+            for key, original in normalized_source.items():
+                if key.endswith(normalized_gpt) or normalized_gpt.endswith(key):
+                    if original not in seen:
+                        matched_paths.append(original)
+                        seen.add(original)
+                    break
+
+        if len(matched_paths) < 10:
+            raise ValueError("prioritization returned no valid file paths")
+
+        prioritized = {
+            path: filtered_file_index[path]
+            for path in all_paths
+            if path in seen
+        }
+        print(
+            f"[indexer] prioritization complete: {len(prioritized)} files selected from "
+            f"{total_files}"
+        )
+        return prioritized
+    except Exception as exc:
+        print(f"[indexer] prioritization failed, using all {total_files} files")
+        print(f"[indexer] prioritization warning: {exc}")
+        return filtered_file_index
+
+
 def _first_lines(content: str, line_count: int) -> str:
     return "\n".join(content.splitlines()[:line_count])
 
@@ -201,13 +378,27 @@ def _extract_json_array(payload: str) -> list[dict[str, Any]]:
 
 
 def _normalize_classification(file_path: str, item: dict[str, Any]) -> dict[str, Any]:
-    file_type = str(item.get("file_type", "other")).strip().lower()
+    file_type = str(item.get("file_type") or item.get("type") or "other").strip().lower()
     domain_area = str(item.get("domain_area", "other")).strip().lower()
     return {
         "file_path": file_path,
         "file_type": file_type if file_type in CLASSIFICATION_ALLOWED_TYPES else "other",
         "domain_area": domain_area if domain_area in CLASSIFICATION_ALLOWED_DOMAINS else "other",
-        "is_important": bool(item.get("is_important", False)),
+        "is_important": bool(
+            item.get(
+                "is_important",
+                file_type
+                in {
+                    "entry_point",
+                    "controller",
+                    "route",
+                    "model",
+                    "service",
+                    "page",
+                    "store",
+                },
+            )
+        ),
         "one_line_description": str(item.get("one_line_description", "")).strip(),
     }
 
@@ -219,42 +410,183 @@ async def classify_files_batch(
     paths = list(file_index.keys())
     results: dict[str, dict[str, Any]] = {}
 
+    def deterministic_classify(file_path: str, language: str) -> str | None:
+        """Returns a type if we can determine it with certainty, else None."""
+        path_lower = file_path.lower().replace("\\", "/")
+        parts = path_lower.split("/")
+        filename = parts[-1]
+
+        if any(
+            filename.endswith(ext)
+            for ext in [
+                ".test.ts",
+                ".test.tsx",
+                ".test.js",
+                ".test.jsx",
+                ".spec.ts",
+                ".spec.tsx",
+                ".spec.js",
+                ".spec.jsx",
+                "_test.go",
+                "_test.py",
+                ".test.py",
+            ]
+        ):
+            return "test"
+
+        if any(filename.endswith(ext) for ext in [".css", ".scss", ".sass", ".less"]):
+            return "style"
+
+        if filename in [
+            "package.json",
+            "tsconfig.json",
+            "tsconfig.base.json",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "dockerfile",
+            "requirements.txt",
+            "pipfile",
+            "pyproject.toml",
+            "setup.py",
+            "makefile",
+            ".env",
+            ".env.example",
+            "jest.config.ts",
+            "jest.config.js",
+            "vite.config.ts",
+            "webpack.config.js",
+            "eslint.config.js",
+            ".eslintrc.js",
+            ".prettierrc",
+            "tailwind.config.js",
+            "tailwind.config.ts",
+            "prisma/schema.prisma",
+            "schema.prisma",
+        ]:
+            return "config"
+
+        if filename in [
+            ".eslintignore",
+            "eslintignore",
+            ".gitignore",
+            "gitignore",
+            ".prettierignore",
+            "prettierignore",
+            ".prettierrc",
+            "prettierrc",
+            ".editorconfig",
+            "editorconfig",
+            ".nvmrc",
+            "nvmrc",
+            ".babelrc",
+            "babelrc",
+            "migration_lock.toml",
+            ".dockerignore",
+            "dockerignore",
+        ]:
+            return "config"
+
+        if any(seg in parts for seg in ["e2e", "cypress", "playwright"]):
+            return "test"
+
+        if filename == "prisma-client.ts" or filename == "prisma-client.js":
+            return "service"
+
+        if filename in ["seed.ts", "seed.js", "seed.py", "seeds.rb"]:
+            return "util"
+
+        return None
+
+    def detect_language(file_path: str, content: str) -> str:
+        try:
+            detector = getattr(enry, "get_language", None)
+            if callable(detector):
+                detected = detector(file_path, content.encode("utf-8", errors="ignore"))
+                if detected:
+                    return str(detected)
+        except Exception:
+            pass
+
+        extension = str(file_index[file_path].get("extension", "")).lower()
+        fallback_map = {
+            ".py": "Python",
+            ".js": "JavaScript",
+            ".jsx": "JavaScript",
+            ".ts": "TypeScript",
+            ".tsx": "TypeScript",
+            ".java": "Java",
+            ".go": "Go",
+            ".rb": "Ruby",
+            ".rs": "Rust",
+            ".cs": "C#",
+            ".cpp": "C++",
+            ".c": "C",
+            ".php": "PHP",
+            ".css": "CSS",
+            ".scss": "SCSS",
+            ".sass": "Sass",
+            ".less": "Less",
+            ".html": "HTML",
+            ".vue": "Vue",
+            ".swift": "Swift",
+            ".kt": "Kotlin",
+        }
+        return fallback_map.get(extension, "Unknown")
+
     async def classify_single_batch(batch_paths: list[str]) -> list[dict[str, Any]]:
-        file_sections = []
+        file_list: list[dict[str, str]] = []
         for path in batch_paths:
             preview = _first_lines(file_index[path]["content"], 30)
-            file_sections.append(f"=== {path} ===\n{preview}")
+            file_list.append(
+                {
+                    "path": path,
+                    "language": detect_language(path, file_index[path]["content"]),
+                    "preview": preview,
+                }
+            )
 
-        prompt = f"""You are classifying source code files for a junior developer tool.
-Read the actual code content — do not guess from filename alone.
+        prompt = f"""You are an expert software engineer helping a junior developer navigate an unfamiliar codebase.
 
-Project: {project_context.get('name', 'Unknown')}
-Purpose: {project_context.get('core_purpose', '')}
+Your job is to classify each file into exactly one category based on its PURPOSE — not its name or location.
 
-Classify each file below:
-
-{chr(10).join(file_sections)}
-
-For EACH file return JSON:
-{{
-  "file_path": "exact path",
-  "file_type": one of exactly: entry_point | route | controller |
-               model | service | middleware | config | utility |
-               test | migration | other,
-  "domain_area": the business domain: auth | user | payment |
-                 product | notification | search | booking |
-                 analytics | core | other,
-  "is_important": true if this file contains core business logic,
-  "one_line_description": "what this file does in one sentence"
-}}
+Categories and their precise definitions:
+- entry_point: The main starting file of the application. Where execution begins. Examples: main.ts, app.py, server.js, index.ts at root level, wsgi.py, manage.py
+- controller: Handles incoming HTTP requests and returns responses. Contains request handlers, route handlers, view functions. Examples: UserController, views.py, handlers.go
+- route: Defines URL mappings and routing configuration. Examples: routes.ts, urls.py, router.rb, routes.go — files whose PRIMARY purpose is mapping URLs to handlers
+- model: Defines data structures, database schemas, or entity shapes. Examples: User.ts, Article.model.ts, schema.prisma, models.py
+- service: Contains business logic, domain operations, data transformations. Not HTTP-specific. Examples: article.service.ts, payment_service.py, booking_service.go
+- middleware: Intercepts requests/responses for cross-cutting concerns. Examples: auth.middleware.ts, logging.py, cors.go
+- component: A reusable UI element. Examples: Button.tsx, ProductCard.vue, UserAvatar.jsx
+- page: A full UI screen or view. Examples: LoginPage.tsx, DashboardScreen.tsx, home.html
+- hook: Stateful logic abstraction. Examples: useAuth.ts, useCart.tsx
+- store: State management. Examples: userSlice.ts, store.ts, AppContext.tsx
+- config: Application configuration. Examples: database.config.ts, settings.py, .env files, docker-compose.yml, package.json, tsconfig.json
+- util: Pure helper functions, shared utilities, constants. Examples: helpers.ts, utils.py, constants.go, formatters.ts
+- test: Any test or spec file. Examples: *.test.ts, *.spec.js, *_test.go, test_*.py
+- style: CSS, SCSS, styling files. Examples: styles.css, theme.scss, tailwind.config.js
+- other: Only use this if NONE of the above categories fit after careful consideration
 
 Rules:
-- Read the actual code to determine type
-- A @RestController annotation means controller
-- A mongoose.Schema means model
-- router.get/post/put means route
-- Works for any language: Java, Go, Ruby, Rust, C#, PHP, Swift etc
-- Return JSON array only, no other text
+1. Base your decision on the file's PURPOSE, not its name or folder
+2. A file named "utils.ts" inside a controllers/ folder that handles requests is a CONTROLLER, not util
+3. Never default to "other" without genuinely considering all categories
+4. If a file could be multiple categories, pick the ONE that best describes its primary purpose
+5. Config files (package.json, tsconfig, docker-compose, .env, Makefile, requirements.txt) are always "config"
+6. Test files are always "test" regardless of what else they do
+
+Here are the files to classify:
+{json.dumps(file_list, ensure_ascii=False)}
+
+For each file, you are given:
+- path: the file path
+- language: detected programming language
+- preview: first 30 lines of the file
+
+Return ONLY a JSON array, no markdown, no explanation:
+[
+  {{"path": "src/controllers/user.ts", "type": "controller"}},
+  {{"path": "src/models/user.ts", "type": "model"}}
+]
 """
 
         async with _openai_semaphore:
@@ -267,12 +599,25 @@ Rules:
                     },
                     {"role": "user", "content": prompt},
                 ],
+                max_tokens=1000,
                 temperature=0.1,
             )
         payload = response.choices[0].message.content or "[]"
-        return _extract_json_array(payload)
+        items = _extract_json_array(payload)
+        for item in items:
+            if item.get("type") not in VALID_TYPES:
+                item["type"] = "other"
+        return items
 
-    batches = [paths[start : start + 15] for start in range(0, len(paths), 15)]
+    gpt_paths: list[str] = []
+    for path in paths:
+        detected_type = deterministic_classify(path, "")
+        if detected_type is None:
+            gpt_paths.append(path)
+            continue
+        results[path] = _normalize_classification(path, {"type": detected_type})
+
+    batches = [gpt_paths[start : start + 15] for start in range(0, len(gpt_paths), 15)]
     tasks = [classify_single_batch(batch) for batch in batches]
     batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -281,7 +626,7 @@ Rules:
             print(f"[indexer] classify batch failed: {batch_result}")
             continue
         for item in batch_result:
-            path = str(item.get("file_path", "")).strip()
+            path = str(item.get("path") or item.get("file_path") or "").strip()
             if path in file_index:
                 results[path] = _normalize_classification(path, item)
 
@@ -428,6 +773,347 @@ def build_dependency_graph(file_index: dict[str, dict[str, Any]]) -> dict[str, d
     return dep_graph
 
 
+async def detect_implicit_routes(project_id: str, extracted_files: list[str]) -> list[dict[str, Any]]:
+    """
+    Detect routes defined by file structure conventions.
+    Works for Next.js, Nuxt, SvelteKit, and similar file-based routers.
+    No GPT needed — purely structural.
+    """
+    implicit_routes: list[dict[str, Any]] = []
+
+    for file_path in extracted_files:
+        path_lower = file_path.lower().replace("\\", "/")
+        parts = path_lower.split("/")
+
+        if "pages" in parts and "api" in parts:
+            api_idx = parts.index("api")
+            route_parts = parts[api_idx + 1 :]
+            route_path = "/" + "/".join(route_parts)
+            route_path = re.sub(r"\[([^\]]+)\]", r":\1", route_path)
+            route_path = re.sub(r"\.(ts|tsx|js|jsx)$", "", route_path)
+            route_path = re.sub(r"/index$", "", route_path) or "/"
+            implicit_routes.append(
+                {
+                    "method": "ANY",
+                    "path": route_path,
+                    "file": file_path,
+                    "component": "api",
+                    "source": "file_based",
+                }
+            )
+
+        if "app" in parts and parts[-1] in ["route.ts", "route.js", "route.tsx"]:
+            app_idx = parts.index("app")
+            route_parts = parts[app_idx + 1 : -1]
+            route_path = "/" + "/".join(route_parts)
+            route_path = re.sub(r"\(([^\)]+)\)", "", route_path)
+            route_path = re.sub(r"\[([^\]]+)\]", r":\1", route_path)
+            route_path = route_path.replace("//", "/") or "/"
+            implicit_routes.append(
+                {
+                    "method": "ANY",
+                    "path": route_path,
+                    "file": file_path,
+                    "component": "api",
+                    "source": "file_based",
+                }
+            )
+
+    return implicit_routes
+
+
+async def build_prefix_map(
+    route_files: list[dict[str, Any]],
+    workspace_root: str,
+    openai_client: AsyncOpenAI,
+) -> dict[str, str]:
+    """
+    Read route aggregator files to build a map of:
+    filename/module -> URL prefix
+    """
+    prefix_map: dict[str, str] = {}
+
+    for file_record in route_files:
+        if str(file_record.get("file_type", "")) != "route":
+            continue
+
+        file_path = os.path.join(workspace_root, str(file_record.get("file_path", "")))
+        if not os.path.exists(file_path):
+            continue
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            async with _openai_semaphore:
+                response = await openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=500,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"""This file registers routes with URL prefixes.
+
+File: {file_record.get("file_path", "")}
+Content:
+{content[:5000]}
+
+Extract all router/blueprint registrations with their URL prefixes.
+Return ONLY a JSON array:
+[
+  {{"module": "users", "prefix": "/api/users"}},
+  {{"module": "articles", "prefix": "/api/articles"}}
+]
+
+The "module" should be the imported module name or file name without extension.
+If no prefix registrations found, return [].
+Return ONLY JSON, no markdown.""",
+                        }
+                    ],
+                )
+
+            raw = (response.choices[0].message.content or "").strip()
+            raw = re.sub(r"```json|```", "", raw).strip()
+            registrations = json.loads(raw)
+            if not isinstance(registrations, list):
+                continue
+
+            for reg in registrations:
+                if isinstance(reg, dict) and reg.get("module") and reg.get("prefix"):
+                    prefix_map[str(reg["module"]).lower()] = str(reg["prefix"])
+        except Exception:
+            continue
+
+    expanded_map: dict[str, str] = {}
+    for module, prefix in prefix_map.items():
+        expanded_map[module] = prefix
+        if "." in module:
+            expanded_map[module.split(".")[-1]] = prefix
+    prefix_map = expanded_map
+
+    logger.info(f"[indexer] built prefix map: {prefix_map}")
+    return prefix_map
+
+
+def remove_unprefixed_duplicates(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Remove routes that are unprefixed duplicates of longer routes.
+
+    Example: if we have both:
+      GET /feed (file: articles_common.py)
+      GET /articles/feed (file: articles_common.py)
+
+    Keep only GET /articles/feed and drop GET /feed.
+    """
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for route in routes:
+        file_path = str(route.get("file", ""))
+        by_file.setdefault(file_path, []).append(route)
+
+    routes_to_remove: set[tuple[str, str, str]] = set()
+
+    for file_path, file_routes in by_file.items():
+        for i, route_a in enumerate(file_routes):
+            path_a = str(route_a.get("path", ""))
+            method_a = str(route_a.get("method", ""))
+            for j, route_b in enumerate(file_routes):
+                if i == j:
+                    continue
+                path_b = str(route_b.get("path", ""))
+                method_b = str(route_b.get("method", ""))
+                if (
+                    method_a == method_b
+                    and len(path_b) > len(path_a)
+                    and path_b.endswith(path_a)
+                    and path_a != "/"
+                ):
+                    routes_to_remove.add((method_a, path_a, file_path))
+
+    cleaned = [
+        route
+        for route in routes
+        if (str(route.get("method", "")), str(route.get("path", "")), str(route.get("file", "")))
+        not in routes_to_remove
+    ]
+
+    removed_count = len(routes) - len(cleaned)
+    if removed_count > 0:
+        logger.info(f"[indexer] removed {removed_count} unprefixed duplicate routes")
+
+    return cleaned
+
+
+async def extract_routes_via_gpt(
+    project_id: str,
+    db: Session,
+    workspace_root: str,
+    extracted_files: list[str],
+) -> list[dict[str, Any]]:
+    """
+    Extract routes from files classified as route/controller/entry_point.
+    Uses GPT to understand any framework in any language.
+    """
+    route_files = db.execute(
+        text(
+            """
+            SELECT file_path, file_type
+            FROM file_index
+            WHERE project_id = :project_id
+              AND file_type IN :types
+            ORDER BY importance_score DESC, file_path ASC
+            """
+        ).bindparams(bindparam("types", expanding=True)),
+        {
+            "project_id": project_id,
+            "types": ["route", "controller", "entry_point", "middleware"],
+        },
+    ).mappings().all()
+
+    service_route_files = db.execute(
+        text(
+            """
+            SELECT file_path, file_type
+            FROM file_index
+            WHERE project_id = :project_id
+              AND file_type = 'service'
+              AND (
+                file_path LIKE :routes_pattern
+                OR file_path LIKE :api_pattern
+                OR file_path LIKE :views_pattern
+                OR file_path LIKE :handlers_pattern
+              )
+            ORDER BY importance_score DESC, file_path ASC
+            """
+        ),
+        {
+            "project_id": project_id,
+            "routes_pattern": "%/routes/%",
+            "api_pattern": "%/api/%",
+            "views_pattern": "%/views/%",
+            "handlers_pattern": "%/handlers/%",
+        },
+    ).mappings().all()
+
+    seen_route_files: set[tuple[str, str]] = set()
+    combined_route_files: list[dict[str, Any]] = []
+    for record in list(route_files) + list(service_route_files):
+        key = (str(record.get("file_path", "")), str(record.get("file_type", "")))
+        if key in seen_route_files:
+            continue
+        seen_route_files.add(key)
+        combined_route_files.append(dict(record))
+    route_files = combined_route_files
+
+    if not route_files:
+        logger.info("[indexer] no route files found in file_index, skipping GPT route extraction")
+        return []
+
+    logger.info(
+        f"[indexer] extracting routes from {len(route_files)} classified route/controller files"
+    )
+
+    openai_client = _client()
+    extracted_lookup = set(extracted_files)
+    all_routes: list[dict[str, Any]] = []
+    prefix_map = await build_prefix_map(route_files, workspace_root, openai_client)
+
+    for file_record in route_files:
+        try:
+            relative_path = str(file_record["file_path"])
+            file_path = os.path.join(workspace_root, relative_path)
+            if relative_path not in extracted_lookup or not os.path.exists(file_path):
+                continue
+
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            if len(content.strip()) < 50:
+                continue
+
+            file_module = relative_path.split("/")[-1]
+            file_module = re.sub(r"\.(py|ts|tsx|js|jsx)$", "", file_module).lower()
+            file_prefix = prefix_map.get(file_module, "")
+            prefix_hint = (
+                f"\nThis router is registered with prefix: {file_prefix}"
+                if file_prefix
+                else "\nNo known URL prefix for this file."
+            )
+
+            async with _openai_semaphore:
+                response = await openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=2000,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"""You are analyzing source code to extract API routes and entry points.
+This could be ANY language or framework. Do not assume anything.
+
+File: {relative_path}
+Language: {file_record["file_type"]}
+{prefix_hint}
+Content:
+{content[:20000]}
+
+Extract every HTTP route, API endpoint, URL handler, or page route defined in this file.
+
+Look for ANY pattern that handles an incoming request:
+- Function decorators: @app.get(), @router.post(), @GetMapping(), @Controller()
+- Function registrations: app.get('/path', handler), router.use('/path', ...)
+- URL mappings: urlpatterns = [path(...)], Route::get(...), r.GET(...)
+- Export conventions: export async function GET(), export default handler
+- Resource definitions: resources :articles, apiRouter.route('/path')
+
+For each route found, return:
+{{
+  "method": "GET|POST|PUT|DELETE|PATCH|ANY",
+  "path": "/exact/path/as/defined",
+  "handler": "exact function or method name",
+  "line_number": 42
+}}
+
+IMPORTANT:
+- Use the EXACT path as written in the code, don't infer or expand
+- If method cannot be determined, use "ANY"
+- If this file defines NO routes, return []
+- Return ONLY a JSON array, no markdown, no explanation
+""",
+                        }
+                    ],
+                )
+
+            raw = (response.choices[0].message.content or "").strip()
+            raw = re.sub(r"```json|```", "", raw).strip()
+            routes = _extract_json_array(raw)
+
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                if not route.get("path"):
+                    continue
+                all_routes.append(
+                    {
+                        "method": str(route.get("method", "ANY")).upper(),
+                        "path": str(route.get("path", "")),
+                        "file": relative_path,
+                        "component": str(file_record["file_type"]),
+                        "handler": route.get("handler", ""),
+                        "line_number": route.get("line_number", 0),
+                        "source": "gpt_extracted",
+                    }
+                )
+
+        except json.JSONDecodeError:
+            logger.warning(f"[indexer] GPT returned invalid JSON for routes in {file_record['file_path']}")
+            continue
+        except Exception as e:
+            logger.warning(f"[indexer] route extraction failed for {file_record['file_path']}: {e}")
+            continue
+
+    logger.info(f"[indexer] GPT extracted {len(all_routes)} routes from {len(route_files)} files")
+    return all_routes
+
+
 def calculate_importance_scores(
     file_index: dict[str, dict[str, Any]],
     classifications: dict[str, dict[str, Any]],
@@ -440,10 +1126,14 @@ def calculate_importance_scores(
         "model": 6,
         "service": 5,
         "middleware": 4,
+        "page": 7,
+        "component": 4,
+        "hook": 4,
+        "store": 5,
         "config": 2,
-        "utility": 2,
+        "util": 2,
         "test": -10,
-        "migration": -5,
+        "style": 1,
         "other": 1,
     }
 
@@ -472,10 +1162,10 @@ async def summarize_files_batch(
     paths_to_summarize = [
         path
         for path in sorted(scores.keys(), key=lambda item: scores[item], reverse=True)
-        if classifications.get(path, {}).get("file_type") not in {"test", "migration"}
+        if classifications.get(path, {}).get("file_type") not in {"test"}
     ]
     summaries: dict[str, dict[str, Any]] = {}
-    total_batches = max((len(paths_to_summarize) + 9) // 10, 1)
+    total_batches = max((len(paths_to_summarize) + SUMMARIZATION_BATCH_SIZE - 1) // SUMMARIZATION_BATCH_SIZE, 1)
 
     async def summarize_single_batch(
         batch_paths: list[str], batch_index: int
@@ -526,7 +1216,10 @@ Return JSON array only.
         print(f"[indexer] summarized batch {batch_index}/{total_batches}")
         return batch_index, _extract_json_array(payload)
 
-    batches = [paths_to_summarize[start : start + 10] for start in range(0, len(paths_to_summarize), 10)]
+    batches = [
+        paths_to_summarize[start : start + SUMMARIZATION_BATCH_SIZE]
+        for start in range(0, len(paths_to_summarize), SUMMARIZATION_BATCH_SIZE)
+    ]
     tasks = [
         summarize_single_batch(batch, batch_index)
         for batch_index, batch in enumerate(batches, start=1)
@@ -795,6 +1488,7 @@ async def run_indexing_pipeline(
 
         print(f"[indexer] {project_context['name']} | extracting files...")
         file_index = await extract_source_files(zip_path)
+        file_index = await prioritize_source_files(file_index)
         file_count = len(file_index)
 
         if file_count > MAX_INDEXABLE_SOURCE_FILES:
@@ -870,7 +1564,109 @@ async def run_indexing_pipeline(
         )
         if upload:
             workspace_path = os.path.join(str(WORKSPACE_DIR), project_id, upload.id)
-            effective_root = unwrap_root_dir(workspace_path)
+        else:
+            logger.warning(f"[indexer] no upload found for project {project_id}, skipping route extraction")
+            workspace_path = os.path.join(str(WORKSPACE_DIR), project_id)
+            logger.warning(f"[indexer] no upload found, using fallback workspace path: {workspace_path}")
+
+        effective_root = unwrap_root_dir(workspace_path)
+        latest_scan = (
+            db_session.query(Scan)
+            .filter(Scan.project_id == project_id)
+            .order_by(Scan.created_at.desc())
+            .first()
+        )
+
+        existing_routes = []
+        if latest_scan and latest_scan.routes:
+            existing_routes = [route for route in latest_scan.routes if isinstance(route, dict)]
+        print(f"[indexer] scanner routes: {len(existing_routes)} found (latest_scan={'found' if latest_scan else 'NONE'})")
+
+        implicit_routes = await detect_implicit_routes(project_id, list(file_index.keys()))
+        gpt_routes = await extract_routes_via_gpt(
+            project_id,
+            db_session,
+            str(effective_root),
+            list(file_index.keys()),
+        )
+        print(f"[indexer] route extraction complete: {len(implicit_routes)} implicit, {len(gpt_routes)} gpt")
+
+        all_routes = existing_routes + implicit_routes + gpt_routes
+        seen: set[tuple[str, str]] = set()
+        unique_routes: list[dict[str, Any]] = []
+        for route in all_routes:
+            if not isinstance(route, dict):
+                continue
+            method = str(route.get("method", "ANY")).upper()
+            path = str(route.get("path", "")).strip()
+            if not path:
+                continue
+            key = (method, path)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_route = dict(route)
+            normalized_route["method"] = method
+            normalized_route["path"] = path
+            unique_routes.append(normalized_route)
+
+        route_type_files = {
+            str(row.file_path)
+            for row in db_session.execute(
+                text(
+                    """
+                    SELECT file_path
+                    FROM file_index
+                    WHERE project_id = :project_id
+                      AND file_type = 'route'
+                    """
+                ),
+                {"project_id": project_id},
+            ).mappings().all()
+        }
+        unique_routes = [
+            route
+            for route in unique_routes
+            if not (
+                route.get("method") == "ANY"
+                and str(route.get("file", "")) in route_type_files
+            )
+        ]
+        logger.info(f"[indexer] after filtering aggregator routes: {len(unique_routes)} routes remain")
+
+        unique_routes = remove_unprefixed_duplicates(unique_routes)
+
+        logger.info(
+            f"[indexer] total unique routes: {len(unique_routes)} "
+            f"({len(implicit_routes)} file-based, {len(gpt_routes)} GPT-extracted)"
+        )
+
+        if latest_scan and unique_routes:
+            latest_scan.routes = unique_routes
+            db_session.flush()
+
+            logger.info(f"[indexer] analyzing routes: {len(unique_routes)} found")
+            analyzer = RouteAnalyzer(str(effective_root))
+            phrase_gen = PhraseGenerator()
+            analyzed = 0
+            failed = 0
+
+            for route in unique_routes:
+                try:
+                    result = analyzer.analyze_route(route)
+                    if result is None:
+                        failed += 1
+                        continue
+                    _enrich_with_phrases(result, phrase_gen)
+                    _upsert_analysis(db_session, project_id, latest_scan.id, result)
+                    analyzed += 1
+                except Exception as route_error:
+                    logger.warning(f"[indexer] deep analysis failed for {route.get('path', '')}: {route_error}")
+                    failed += 1
+
+            db_session.commit()
+            logger.info(f"[indexer] route analysis complete: {analyzed} analyzed, {failed} failed")
+
             understanding_scan_data = dict(scan_data)
             understanding_scan_data["project_name"] = project_context["name"]
             understanding_scan_data["core_purpose"] = project_context["core_purpose"]

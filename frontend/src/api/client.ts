@@ -17,6 +17,7 @@ import type {
   ProjectUnderstandingResponse,
   UnderstandingChatResponse,
   IndexingStatusResponse,
+  StructureResponse,
 } from "../types";
 import type { SequenceData } from "../SequenceDiagram";
 
@@ -112,6 +113,11 @@ export async function fetchProjectDashboard(projectId: string): Promise<ProjectD
 export async function fetchProjectIndexingStatus(projectId: string): Promise<IndexingStatusResponse> {
   const response = await fetch(`${API_BASE}/projects/${projectId}/indexing-status`);
   return parseResponse(response, "Failed to fetch indexing status");
+}
+
+export async function fetchProjectStructure(projectId: string): Promise<StructureResponse> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/structure`);
+  return parseResponse(response, "Failed to fetch structure map");
 }
 
 export async function sendDashboardChatMessage(projectId: string, messages: {role: string, content: string}[]): Promise<DashboardChatResponse> {

@@ -3,10 +3,11 @@ import json
 import logging
 from datetime import datetime, timezone
 import asyncio
-from typing import Any
+from typing import Any, Optional
 import re
 
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from openai import AsyncOpenAI
 from app.config import OPENAI_API_KEY, OPENAI_MODEL
 from app.db.session import SessionLocal
@@ -14,6 +15,13 @@ from app.models.project import Project
 from app.models.project_understanding import ProjectUnderstanding
 
 logger = logging.getLogger(__name__)
+
+# GPT-4o context window is 128K tokens
+# Reserve 4000 tokens for the response output
+# Reserve 1000 tokens for system prompt overhead
+GPT4O_MAX_CONTEXT = 128000
+RESPONSE_RESERVE = 5000
+MAX_PROMPT_TOKENS = GPT4O_MAX_CONTEXT - RESPONSE_RESERVE  # ~123000 tokens
 
 def update_status(project_id: str, status: str, db_session: Session = None):
     # Helper to push status to the database
@@ -42,8 +50,242 @@ def update_status(project_id: str, status: str, db_session: Session = None):
             db_session.close()
 
 
+_DEPTH_TIER_FIELDS = (
+    "project_story_beginner",
+    "project_story_intermediate",
+    "project_story_advanced",
+    "key_decisions_beginner",
+    "key_decisions_intermediate",
+    "key_decisions_advanced",
+    "gotchas_beginner",
+    "gotchas_intermediate",
+    "gotchas_advanced",
+)
+
+
+def understanding_has_depth_tiers(understanding: Optional[ProjectUnderstanding]) -> bool:
+    if understanding is None:
+        return False
+    return all(getattr(understanding, field) is not None for field in _DEPTH_TIER_FIELDS)
+
+
+def _strip_json_fences(payload: str) -> str:
+    return re.sub(r"```json|```", "", payload or "").strip()
+
+
+def _parse_json_object(payload: str) -> dict[str, Any]:
+    parsed = json.loads(_strip_json_fences(payload) or "{}")
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected JSON object")
+    return parsed
+
+
+def _parse_json_array(payload: str) -> list[dict[str, Any]]:
+    parsed = json.loads(_strip_json_fences(payload) or "[]")
+    if not isinstance(parsed, list):
+        raise ValueError("Expected JSON array")
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+async def generate_depth_tiers(project_id: str, db_session: Session) -> str:
+    understanding = (
+        db_session.query(ProjectUnderstanding)
+        .filter(ProjectUnderstanding.project_id == project_id)
+        .first()
+    )
+    if not understanding:
+        raise ValueError("Understanding not generated yet")
+
+    if understanding_has_depth_tiers(understanding):
+        return "cached"
+
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required for depth tier generation")
+
+    existing_project_story = understanding.project_story or ""
+    existing_key_decisions = understanding.key_decisions or []
+    existing_gotchas = understanding.gotchas or []
+
+    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+    story_prompt = f"""
+You are explaining a software project to different audiences.
+
+Original project story:
+{existing_project_story}
+
+Rewrite this for THREE different audience levels. Return ONLY a JSON object:
+{{
+  "beginner": "2-3 sentences using simple analogies. No technical terms. Compare to everyday things. Example: 'This app is like a digital library where...'",
+  "intermediate": "3-4 sentences with technical context but no deep implementation details. Name the frameworks and patterns used.",
+  "advanced": "4-5 sentences covering architecture decisions, tradeoffs, scalability considerations, and non-obvious design choices."
+}}
+"""
+
+    decisions_prompt = f"""
+You are explaining architectural decisions to different audiences.
+
+Original key decisions:
+{json.dumps(existing_key_decisions)}
+
+For each decision, rewrite the explanation for THREE audience levels.
+Return ONLY a JSON array with the same number of items:
+[
+  {{
+    "title": "same title",
+    "beginner": "Plain English. Use analogies. Why does this matter to a non-technical person?",
+    "intermediate": "Technical summary with the key pattern named. What problem does it solve?",
+    "advanced": "Deep tradeoffs, alternatives considered, performance/scaling implications, edge cases."
+  }}
+]
+"""
+
+    gotchas_prompt = f"""
+You are explaining code gotchas/warnings to different audiences.
+
+Original gotchas:
+{json.dumps(existing_gotchas)}
+
+For each gotcha, rewrite for THREE audience levels.
+Return ONLY a JSON array:
+[
+  {{
+    "title": "same title",
+    "beginner": "Simple warning in plain English. What could go wrong and why should they care?",
+    "intermediate": "Technical description of the issue with the specific file/function named.",
+    "advanced": "Root cause, potential failure modes, how to properly fix it, related patterns to watch for."
+  }}
+]
+"""
+
+    async def generate_story_tiers() -> dict[str, Any]:
+        res = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You return only valid JSON objects."},
+                {"role": "user", "content": story_prompt},
+            ],
+            max_tokens=2500,
+            response_format={"type": "json_object"},
+        )
+        return _parse_json_object(res.choices[0].message.content or "{}")
+
+    async def generate_key_decision_tiers() -> list[dict[str, Any]]:
+        res = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You return only valid JSON arrays."},
+                {"role": "user", "content": decisions_prompt},
+            ],
+            max_tokens=4000,
+        )
+        return _parse_json_array(res.choices[0].message.content or "[]")
+
+    async def generate_gotcha_tiers() -> list[dict[str, Any]]:
+        res = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You return only valid JSON arrays."},
+                {"role": "user", "content": gotchas_prompt},
+            ],
+            max_tokens=4000,
+        )
+        return _parse_json_array(res.choices[0].message.content or "[]")
+
+    story_tiers, decision_tiers, gotcha_tiers = await asyncio.gather(
+        generate_story_tiers(),
+        generate_key_decision_tiers(),
+        generate_gotcha_tiers(),
+    )
+
+    understanding.project_story_beginner = str(story_tiers.get("beginner", "") or "")
+    understanding.project_story_intermediate = str(story_tiers.get("intermediate", "") or "")
+    understanding.project_story_advanced = str(story_tiers.get("advanced", "") or "")
+
+    understanding.key_decisions_beginner = [
+        {"title": item.get("title", ""), "beginner": item.get("beginner", "")}
+        for item in decision_tiers
+    ]
+    understanding.key_decisions_intermediate = [
+        {"title": item.get("title", ""), "intermediate": item.get("intermediate", "")}
+        for item in decision_tiers
+    ]
+    understanding.key_decisions_advanced = [
+        {"title": item.get("title", ""), "advanced": item.get("advanced", "")}
+        for item in decision_tiers
+    ]
+
+    understanding.gotchas_beginner = [
+        {"title": item.get("title", ""), "beginner": item.get("beginner", "")}
+        for item in gotcha_tiers
+    ]
+    understanding.gotchas_intermediate = [
+        {"title": item.get("title", ""), "intermediate": item.get("intermediate", "")}
+        for item in gotcha_tiers
+    ]
+    understanding.gotchas_advanced = [
+        {"title": item.get("title", ""), "advanced": item.get("advanced", "")}
+        for item in gotcha_tiers
+    ]
+
+    understanding.generated_at = datetime.now(timezone.utc)
+    db_session.commit()
+    db_session.refresh(understanding)
+    return "generated"
+
+
 def _estimate_tokens(prompt: str) -> int:
     return len(prompt) // 4
+
+
+def _content_head(content: str, max_lines: int) -> str:
+    return "\n".join((content or "").splitlines()[:max_lines])
+
+
+def _load_indexed_file_context(
+    project_id: str,
+    db: Session,
+    *,
+    max_files: int = 12,
+) -> list[dict[str, Any]]:
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                file_path,
+                file_type,
+                domain_area,
+                summary,
+                exports,
+                key_concepts,
+                full_content,
+                line_count,
+                importance_score
+            FROM file_index
+            WHERE project_id = :project_id
+            ORDER BY importance_score DESC, line_count DESC, file_path ASC
+            LIMIT :limit
+            """
+        ),
+        {"project_id": project_id, "limit": max_files},
+    ).mappings().all()
+
+    indexed_files: list[dict[str, Any]] = []
+    for row in rows:
+        indexed_files.append(
+            {
+                "path": row["file_path"],
+                "file_type": row["file_type"] or "other",
+                "domain_area": row["domain_area"] or "other",
+                "summary": row["summary"] or "",
+                "exports": list(row["exports"] or []),
+                "key_concepts": list(row["key_concepts"] or []),
+                "content": row["full_content"] or "",
+                "line_count": int(row["line_count"] or 0),
+                "importance_score": float(row["importance_score"] or 0),
+            }
+        )
+    return indexed_files
 
 
 async def shallow_read_all_files(effective_root: str, file_list: list[str]) -> dict[str, str]:
@@ -567,9 +809,11 @@ async def generate_understanding_backend(project_id: str, scan_data: dict, effec
     project_name = scan_data.get("project_name", "Unknown Project")  # backfilled below from DB when available
     
     db: Session = SessionLocal()
+    indexed_files: list[dict[str, Any]] = []
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
         project_name = project.name if project else "Project"
+        indexed_files = _load_indexed_file_context(project_id, db, max_files=12)
     finally:
         db.close()
 
@@ -579,19 +823,31 @@ async def generate_understanding_backend(project_id: str, scan_data: dict, effec
         "dependencies": trimmed_dependencies,  # max 15 dependencies
         "routes": trimmed_routes,  # max 10 routes
         "components": scan_data.get("components", []),
-        "files": files_list,  # max 50 file paths
+        "files": [item["path"] for item in indexed_files] if indexed_files else files_list,
     }
 
     try:
         # ──────────────────────────────────────────────────────────
-        # Pass 1 — Shallow read all files, then select deep-read targets
+        # Pass 1 — Prefer indexed files from DB, fall back to shallow disk reads
         # ──────────────────────────────────────────────────────────
-        shallow_snippets = await shallow_read_all_files(effective_root, files_list)
+        using_index = bool(indexed_files)
+        indexed_by_path = {item["path"]: item for item in indexed_files}
+        if using_index:
+            candidate_paths = [item["path"] for item in indexed_files]
+            shallow_snippets = {
+                item["path"]: _content_head(item.get("content", ""), 20)
+                for item in indexed_files
+                if item.get("content")
+            }
+        else:
+            candidate_paths = files_list
+            shallow_snippets = await shallow_read_all_files(effective_root, files_list)
+
         route_paths = [f"{r['method']} {r['path']}" for r in call2_context["routes"]]
         file_map_parts: list[str] = []
         imported_by_counts = _imported_by_count_map(scan_data.get("import_graph", {}))
         shallow_paths = sorted(
-            list(shallow_snippets.keys()),
+            list(candidate_paths),
             key=lambda path: (
                 _score_file_universally(path, shallow_snippets.get(path, "")) + (imported_by_counts.get(path, 0) * 5),
                 path,
@@ -600,8 +856,26 @@ async def generate_understanding_backend(project_id: str, scan_data: dict, effec
         )
 
         for path in shallow_paths:
-            snippet = shallow_snippets[path]
-            file_map_parts.append(f"--- {path} ---\n{snippet}")
+            snippet = shallow_snippets.get(path, "")
+            if using_index:
+                indexed_item = indexed_by_path.get(path, {})
+                file_map_parts.append(
+                    "\n".join(
+                        [
+                            f"--- {path} ---",
+                            f"Type: {indexed_item.get('file_type', 'other')}",
+                            f"Domain: {indexed_item.get('domain_area', 'other')}",
+                            f"Importance: {indexed_item.get('importance_score', 0)}",
+                            f"Summary: {indexed_item.get('summary', '')}",
+                            f"Exports: {json.dumps(indexed_item.get('exports', []))}",
+                            f"Concepts: {json.dumps(indexed_item.get('key_concepts', []))}",
+                            "Preview:",
+                            snippet,
+                        ]
+                    )
+                )
+            else:
+                file_map_parts.append(f"--- {path} ---\n{snippet}")
         file_map = "\n\n".join(file_map_parts)
 
         selection_rules = """
@@ -646,10 +920,12 @@ LANGUAGES: {json.dumps(call2_context["languages"])}
 DEPENDENCIES: {json.dumps(call2_context["dependencies"])}
 ROUTES DETECTED: {json.dumps(route_paths)}
 
-FILE CONTENTS (first 20 lines each):
+FILE CONTEXTS:
 {file_map}
 
 {selection_rules}
+
+Prefer files with higher importance when the summaries and previews support that choice.
 
 Return JSON:
 {{
@@ -664,7 +940,7 @@ Return only valid JSON.
 """
         call1_estimated_tokens = _estimate_tokens(call1_prompt)
         print(f"[understanding] call1 prompt estimate: ~{call1_estimated_tokens} tokens")
-        while call1_estimated_tokens > 3000 and len(shallow_paths) > 15:
+        while call1_estimated_tokens > MAX_PROMPT_TOKENS and len(shallow_paths) > 15:
             print(f"[understanding] prompt too large: ~{call1_estimated_tokens} tokens, trimming")
             shallow_paths = shallow_paths[: max(15, len(shallow_paths) - 10)]
             trimmed_file_map = "\n\n".join(
@@ -691,11 +967,12 @@ Return only valid JSON."""
 
         res1 = await asyncio.wait_for(
             client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You return only valid JSON."},
                     {"role": "user", "content": call1_prompt}
                 ],
+                max_tokens=4000,
                 response_format={"type": "json_object"}
             ),
             timeout=30.0
@@ -735,16 +1012,20 @@ Return only valid JSON."""
         print(f"[understanding] reasoning: {reasoning}")
         
         # ──────────────────────────────────────────────────────────
-        # Pass 2 — Deep read of selected files
+        # Pass 2 — Use stored indexed content when available; fall back to disk
         # ──────────────────────────────────────────────────────────
         file_contents: dict[str, str] = {}
         for fpath in important_files:
+            indexed_item = indexed_by_path.get(fpath)
+            if indexed_item and indexed_item.get("content"):
+                file_contents[fpath] = _content_head(str(indexed_item.get("content", "")), 100)
+                continue
+
             full_path = os.path.join(effective_root, fpath)
             if not os.path.exists(full_path):
                 continue
             try:
                 with open(full_path, "r", errors="ignore") as f:
-                    # Read max 100 lines
                     lines = f.readlines()
                     file_contents[fpath] = "".join(lines[:100])
             except Exception as e:
@@ -753,6 +1034,11 @@ Return only valid JSON."""
         # Keep the payload tiny and trim further if needed.
         file_items = list(file_contents.items())[:5]
         compact_files = {k: v for k, v in file_items}
+        indexed_summaries = {
+            path: indexed_by_path[path].get("summary", "")
+            for path in important_files
+            if path in indexed_by_path and indexed_by_path[path].get("summary")
+        }
         compact_context = {
             "project_name": call2_context["project_name"],
             "languages": call2_context["languages"],
@@ -760,6 +1046,7 @@ Return only valid JSON."""
             "routes": call2_context["routes"][:10],
             "components": call2_context["components"],
             "files": call2_context["files"][:50],
+            "indexed_summaries": indexed_summaries,
         }
         actual_route_paths = [f"{r['method']} {r['path']}" for r in compact_context["routes"]]
         compact_structure = {
@@ -774,6 +1061,8 @@ Return only valid JSON."""
         core_feature_content = ""
         if core_feature_file:
             core_feature_content = file_contents.get(core_feature_file, "")
+            if not core_feature_content and core_feature_file in indexed_by_path:
+                core_feature_content = _content_head(str(indexed_by_path[core_feature_file].get("content", "")), 120)
             if not core_feature_content:
                 full_path = os.path.join(effective_root, core_feature_file)
                 if os.path.exists(full_path):
@@ -783,24 +1072,32 @@ Return only valid JSON."""
                     except Exception:
                         core_feature_content = ""
 
-        def _trim_for_size(
+        def _fit_files_to_prompt_budget(
             prompt_builder,
             dependencies: list[str],
             routes: list[dict[str, str]],
             files_payload: dict[str, str],
         ):
-            prompt = prompt_builder(dependencies, routes, files_payload)
-            estimated = _estimate_tokens(prompt)
-            while estimated > 3000 and (len(routes) > 3 or len(dependencies) > 5 or len(files_payload) > 1):
-                print(f"[understanding] prompt too large: ~{estimated} tokens, trimming")
-                if len(routes) > 3:
-                    routes = routes[: max(3, len(routes) - 2)]
-                if len(dependencies) > 5:
-                    dependencies = dependencies[: max(5, len(dependencies) - 3)]
-                if len(files_payload) > 1:
-                    files_payload = dict(list(files_payload.items())[:-1])
+            if not files_payload:
                 prompt = prompt_builder(dependencies, routes, files_payload)
                 estimated = _estimate_tokens(prompt)
+                return prompt, dependencies, routes, files_payload, estimated
+
+            empty_files_payload = {path: "" for path in files_payload}
+            base_prompt = prompt_builder(dependencies, routes, empty_files_payload)
+            base_tokens = _estimate_tokens(base_prompt)
+            available_chars = max((MAX_PROMPT_TOKENS - base_tokens) * 4, 0)
+            chars_per_file = available_chars // max(len(files_payload), 1)
+
+            truncated_files_payload = {
+                path: content[:chars_per_file]
+                for path, content in files_payload.items()
+            }
+            prompt = prompt_builder(dependencies, routes, truncated_files_payload)
+            estimated = _estimate_tokens(prompt)
+            if estimated > MAX_PROMPT_TOKENS:
+                print(f"[understanding] prompt too large: ~{estimated} tokens, using single-pass truncation")
+            files_payload = truncated_files_payload
             return prompt, dependencies, routes, files_payload, estimated
 
         def _build_call2a_prompt(dependencies: list[str], routes: list[dict[str, str]], files_payload: dict[str, str]) -> str:
@@ -819,6 +1116,9 @@ Structure Analysis:
 
 Important File Contents:
 {json.dumps(files_payload)}
+
+Indexed File Summaries:
+{json.dumps(indexed_summaries)}
 
 Return ONE single JSON object with ONLY these keys and exact structures:
 "project_story": 4 paragraph prose explaining 1. What it does, 2. How it's structured, 3. Key choices, 4. What's unique.
@@ -843,6 +1143,9 @@ Structure Analysis:
 
 Important File Contents:
 {json.dumps(files_payload)}
+
+Indexed File Summaries:
+{json.dumps(indexed_summaries)}
 
 Return ONE single JSON object with ONLY these keys and exact structures:
 "data_journey": array of up to 8 step objects with "step", "actor", "action", "detail", "type" (request|validation|processing|database|external|response).
@@ -903,7 +1206,7 @@ Example of bad term:
   plain_english: "Application Programming Interface"
 File contents: {json.dumps(files_payload)}
 """
-        call2a_prompt, deps2a, routes2a, files2a, est2a = _trim_for_size(
+        call2a_prompt, deps2a, routes2a, files2a, est2a = _fit_files_to_prompt_budget(
             _build_call2a_prompt,
             compact_context["dependencies"][:],
             compact_context["routes"][:],
@@ -911,7 +1214,7 @@ File contents: {json.dumps(files_payload)}
         )
         print(f"[understanding] call2a prompt estimate: ~{est2a} tokens")
 
-        call2b_prompt, deps2b, routes2b, files2b, est2b = _trim_for_size(
+        call2b_prompt, deps2b, routes2b, files2b, est2b = _fit_files_to_prompt_budget(
             _build_call2b_prompt,
             deps2a[:],
             routes2a[:],
@@ -921,22 +1224,24 @@ File contents: {json.dumps(files_payload)}
 
         async def call_2a() -> dict[str, Any]:
             res2a = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You return only valid JSON matching the exact requested keys and structure."},
                     {"role": "user", "content": call2a_prompt},
                 ],
+                max_tokens=4000,
                 response_format={"type": "json_object"},
             )
             return json.loads(res2a.choices[0].message.content or "{}")
 
         async def call_2b() -> dict[str, Any]:
             res2b = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You return only valid JSON matching the exact requested keys and structure."},
                     {"role": "user", "content": call2b_prompt},
                 ],
+                max_tokens=4000,
                 response_format={"type": "json_object"},
             )
             return json.loads(res2b.choices[0].message.content or "{}")

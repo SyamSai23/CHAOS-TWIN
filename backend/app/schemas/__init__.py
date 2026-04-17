@@ -392,10 +392,19 @@ class ProjectUnderstandingResponse(BaseModel):
     project_id: str
     status: str
     project_story: Optional[str] = None
+    project_story_beginner: Optional[str] = None
+    project_story_intermediate: Optional[str] = None
+    project_story_advanced: Optional[str] = None
     system_map: Optional[list[dict]] = None
     data_journey: Optional[list[dict]] = None
     key_decisions: Optional[list[dict]] = None
+    key_decisions_beginner: Optional[list[dict]] = None
+    key_decisions_intermediate: Optional[list[dict]] = None
+    key_decisions_advanced: Optional[list[dict]] = None
     gotchas: Optional[list[dict]] = None
+    gotchas_beginner: Optional[list[dict]] = None
+    gotchas_intermediate: Optional[list[dict]] = None
+    gotchas_advanced: Optional[list[dict]] = None
     glossary: Optional[list[dict]] = None
     generated_at: Optional[datetime] = None
 

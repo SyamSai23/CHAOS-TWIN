@@ -1,5 +1,7 @@
 import {
   Activity,
+  FolderOpen,
+  FolderTree,
   GitBranch,
   GitCommitHorizontal,
   LayoutDashboard,
@@ -10,8 +12,10 @@ import {
 
 export type NavItem =
   | "landing"
+  | "projects"
   | "dashboard"
   | "understanding"
+  | "feature-map"
   | "architecture"
   | "api-explorer"
   | "sequence-diagrams"
@@ -32,10 +36,12 @@ export const NAV_GROUPS: {
   {
     label: "Explore",
     items: [
+      { key: "projects",         label: "Projects",         icon: FolderOpen },
       { key: "dashboard",        label: "Dashboard",        icon: LayoutDashboard },
       { key: "understanding",    label: "Understanding",    icon: BookOpen },
+      { key: "feature-map",      label: "Feature Map",      icon: FolderTree,            requiresScan: true },
       { key: "architecture",     label: "Architecture",     icon: GitBranch,            requiresScan: true, comingSoon: true },
-      { key: "api-explorer",     label: "API Explorer",     icon: Zap,                  requiresScan: true, comingSoon: true },
+      { key: "api-explorer",     label: "API Explorer",     icon: Zap,                  requiresScan: true },
       { key: "sequence-diagrams",label: "Sequence Diagrams",icon: GitCommitHorizontal,  requiresScan: true, comingSoon: true },
       { key: "deep-dive",        label: "Deep Dive",        icon: Search,               requiresScan: true, comingSoon: true },
       { key: "simulation",       label: "Simulation",       icon: Activity,             requiresScan: true, comingSoon: true },
