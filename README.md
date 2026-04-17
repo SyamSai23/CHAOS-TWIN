@@ -1,404 +1,180 @@
 # Chaos Twin
 
-Chaos Twin is a codebase intelligence tool for junior developers.
+**Codebase intelligence for developers joining an unfamiliar project.**
 
-You upload a ZIP of a repository, Chaos Twin scans it locally, builds a structural model, indexes important files for semantic search, generates high-level project documentation, and exposes the result through a React frontend with dashboard, architecture, API explorer, understanding, and AI chat workflows.
+Upload any codebase as a ZIP. Chaos Twin automatically analyzes it and gives you a structured mental model — architecture, features, API routes, request flows, and the relationships between everything. No configuration. No annotations. Works on any language and framework.
 
-## What’s New
+---
 
-- Terra-style frontend with project landing, dashboard, understanding pages, and a floating AI Architect chat bubble.
-- Background indexing pipeline that classifies files, builds a dependency graph, summarizes important files, and stores pgvector embeddings.
-- Semantic project search endpoint powered by `text-embedding-3-small`.
-- AI-generated project understanding with:
-  - `project_story`
-  - `system_map`
-  - `data_journey`
-  - `key_decisions`
-  - `gotchas`
-  - `glossary`
-- Indexing status tracking and failure handling.
-- Understanding auto-recovery for stale generations.
-- Workspaces moved outside the backend directory to avoid dev-server reload loops.
-- Hard indexing cap of 500 source files per project to avoid runaway processing.
+## The Problem
 
-## Core Capabilities
+A developer joins a new company. They get access to a 200-file Express + React Native monorepo they've never seen. The senior dev says "get familiar with the codebase." Three days later, they still don't know where authentication lives, which files are safe to touch, or how a booking request actually flows through the system.
 
-### 1. Scan and detect
+Chaos Twin solves this in minutes.
 
-Chaos Twin scans uploaded codebases and extracts:
+---
 
-- languages
-- frameworks
-- entry points
-- components
-- routes
-- infrastructure signals
-- imports and execution-flow evidence
+## What It Does
 
-This scan is deterministic and serves as the foundation for every downstream feature.
+| Page | What you get |
+|---|---|
+| **Dashboard** | Tech stack, entry points, external services, auth detection, complexity score |
+| **Understanding** | 6-section AI-generated doc: project story, system map, data journey, key decisions, gotchas, glossary |
+| **Feature Map** | Features as a constellation — connection lines show coupling, shared infrastructure layer, health indicators, related context per feature |
+| **API Explorer** | Every route grouped by feature — inline trace, request schema tree, example response JSON, search |
+| **Sequence Diagrams** | Per-route swimlane diagrams showing exact participants, phases, and call flow |
 
-### 2. Build a code intelligence index
+---
 
-After a scan completes, Chaos Twin starts a background indexing pipeline in `backend/app/services/file_indexer.py` that:
+## How It Works
 
-- filters source files using `enry`
-- skips vendor, generated, binary, and documentation files
-- caps oversized files to a representative first/last-line window
-- classifies files with `gpt-4o-mini`
-- builds a dependency graph using `tree-sitter` with regex fallback
-- calculates importance scores
-- summarizes important files for junior developers
-- generates embeddings with `text-embedding-3-small`
-- stores results in PostgreSQL + pgvector
+Every upload triggers a fully automatic pipeline:
 
-The indexing pipeline also powers later understanding generation.
+```
+ZIP upload
+  ↓
+Scanner        — enry language detection, route extraction, dependency parsing
+  ↓
+File Prioritizer  — GPT-4o-mini selects the 150 most important files from large repos
+  ↓
+File Classifier   — GPT-4o-mini classifies every file by purpose (route, controller, model, service, etc.)
+  ↓
+Dependency Graph  — tree-sitter + regex builds import relationships across all files
+  ↓
+File Summarizer   — GPT-4o-mini summarizes every file in plain English (parallel batches)
+  ↓
+Embedding Generator — text-embedding-3-small generates vectors, stored in pgvector
+  ↓
+Route Extractor   — 2-pass: deterministic detection for Next.js, GPT for Express/FastAPI/Django/Rails/Go/etc.
+  ↓
+Deep Route Analyzer — Python AST for .py files, GPT-4o fallback for everything else
+  ↓
+Phrase Generator  — enriches route phases with plain English descriptions
+  ↓
+Understanding Generator — GPT-4o produces 6-section documentation from the most important files
+```
 
-### 3. Generate project understanding
+No hardcoded language rules. Enry detects the language. Tree-sitter parses imports. GPT handles the rest. It works on Python, JavaScript, TypeScript, Java, Go, Ruby, C#, and more.
 
-Once indexing finishes, Chaos Twin generates a structured understanding model in `backend/app/services/understanding_generator.py`.
+---
 
-This is the human-friendly layer of the product:
+## Feature Map — Feature Constellation
 
-- a plain-English project story
-- a system map of major components
-- a route-aware data journey
-- architectural decisions and tradeoffs
-- project-specific gotchas
-- a domain glossary
+The Feature Map goes beyond a list of features. It shows how they relate:
 
-If understanding generation gets stuck in `generating`, the backend can detect stale jobs and restart them.
+- **Connection lines** between features that share files. Thicker line = more shared files. Hover to see coupling level (🔴 tightly coupled / 🟡 moderate / 🟢 loose) and which files are shared.
+- **Shared Infrastructure layer** — files used in 3+ features surface as a foundation band. These are your cross-cutting concerns: database clients, auth middleware, logging.
+- **Health indicators** on every card — file count, test coverage, external dependency count, risk level.
+- **"Also used by" tags** on every file in the focus view — click to jump to the other feature.
+- **Related context** button — shows which features are coupled, how many files they share, and the riskiest file in the cluster.
 
-### 4. Search semantically
+---
 
-Chaos Twin supports project-level semantic search:
+## API Explorer — API Command Center
 
-- query: “how does authentication work?”
-- retrieve matching files by vector similarity
-- boost results using importance score
-- show related dependency graph context for top hits
+- **Inline trace** — click ▶ Trace on any route to see a dark terminal-style breakdown of phases and steps, right inside the explorer. No page navigation.
+- **Search** — filter routes by path, method, or description keyword.
+- Route complexity indicators, DB/external flags, parameter tables, response fields.
+- "Full page →" link to the dedicated Sequence Diagram view for deep dives.
 
-Endpoint:
-
-- `GET /projects/{project_id}/search?q=...&limit=8`
-
-### 5. Explore through the UI
-
-The frontend includes:
-
-- Terra landing page
-- project dashboard
-- understanding page
-- architecture graph
-- API explorer
-- sequence diagrams
-- deep dive view
-- simulation view
-- context-aware AI Architect chat
+---
 
 ## Tech Stack
 
-### Backend
-
-- FastAPI
-- SQLAlchemy
-- PostgreSQL
-- pgvector
-- OpenAI API
-- `tree-sitter`
-- `tree-sitter-languages`
-- `enry-python`
-
-### Frontend
-
-- React 19
-- TypeScript
-- Vite 7
-- `@xyflow/react`
-- `react-markdown`
-- `lucide-react`
-
-### Local infrastructure
-
+**Backend**
+- FastAPI (Python 3.11)
+- PostgreSQL + pgvector (semantic search, embeddings)
 - Docker Compose
-- local ZIP storage
-- local extracted workspaces
 
-## Repository Layout
+**Frontend**
+- React 19 + TypeScript + Vite
+- React Flow (`@xyflow/react`) — system map
+- Mermaid.js — sequence diagrams
 
-```text
-chaos-twin/
-├── backend/
-│   ├── alembic/
-│   ├── app/
-│   │   ├── config.py
-│   │   ├── db/
-│   │   ├── domain/system_model/
-│   │   ├── models/
-│   │   ├── routers/
-│   │   ├── schemas/
-│   │   └── services/
-│   ├── requirements.txt
-│   └── .env.example
+**AI**
+- GPT-4o — deep reasoning, understanding generation, depth tiers
+- GPT-4o-mini — classification, summarization, route extraction, phrase generation
+- `text-embedding-3-small` — file embeddings for semantic search
+
+**Analysis**
+- `enry-python` — language detection
+- `tree-sitter` + `tree-sitter-languages` — import graph construction
+- Python `ast` module — deep AST analysis for Python routes
+
+---
+
+## Running Locally
+
+**Prerequisites:** Docker, Docker Compose, an OpenAI API key.
+
+```bash
+git clone https://github.com/SyamSai23/CHAOS-TWIN
+cd CHAOS-TWIN
+```
+
+Create a `.env` file in the project root:
+
+```env
+OPENAI_API_KEY=your_key_here
+DATABASE_URL=postgresql://postgres:postgres@db:5432/chaostwin
+```
+
+Start everything:
+
+```bash
+docker compose up --build
+```
+
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:8000
+- API docs: http://localhost:8000/docs
+
+Upload any project as a ZIP on the landing page. The full pipeline runs automatically in the background — indexing progress is shown live on the dashboard.
+
+---
+
+## Project Structure
+
+```
+CHAOS-TWIN/
+├── app/
+│   ├── main.py                     # FastAPI app, router registration
+│   ├── routers/
+│   │   └── projects.py             # All /projects/* endpoints
+│   └── services/
+│       ├── scanner_v3.py           # ZIP scanner, language + route detection
+│       ├── file_indexer.py         # Full indexing pipeline
+│       ├── ast_analyzer.py         # Deep route analysis (Python AST + GPT fallback)
+│       ├── understanding_generator.py  # 6-section documentation
+│       ├── phrase_generator.py     # Route phase enrichment
+│       └── sequence_generator.py  # Per-route sequence diagrams
 ├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   ├── components/
-│   │   └── views/
-│   ├── package.json
-│   └── index.html
-├── sample-projects/
-├── scripts/
-├── docker-compose.yml
-├── workspaces/
-└── README.md
+│   └── src/
+│       └── pages/
+│           ├── TerraLandingView.tsx
+│           ├── ProjectDashboard.tsx
+│           ├── UnderstandingPage.tsx
+│           ├── FeatureMapPage.tsx
+│           ├── ApiExplorerPage.tsx
+│           └── SequenceDiagramPage.tsx
+└── docker-compose.yml
 ```
 
-## Data Model Added for Indexing
+---
 
-Chaos Twin creates and uses these tables on startup:
+## Design Principles
 
-- `file_index`
-- `dependency_graph`
-- `indexing_status`
+- **Zero hardcoding** — no language-specific rules, no framework assumptions. Everything is detected or inferred.
+- **Production quality** — not a demo. Handles real codebases up to 500 files, monorepos, multi-component projects.
+- **Junior-first** — every insight is written in plain English. Technical jargon is explained. The goal is understanding, not just documentation.
+- **Persistent** — analysis results are stored in PostgreSQL. Re-opening a project is instant. Nothing is regenerated unless you rescan.
 
-It also enables:
+---
 
-- `pgcrypto`
-- `vector`
+## What's Next
 
-The `file_index` table stores:
-
-- file path
-- file type
-- domain area
-- summary
-- exports
-- key concepts
-- full content snapshot
-- line count
-- importance score
-- embedding
-
-## Quick Start
-
-### 1. Start PostgreSQL with pgvector
-
-From the repository root:
-
-```bash
-docker compose up -d db
-```
-
-This uses:
-
-- `pgvector/pgvector:pg16`
-
-### 2. Start the backend
-
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-Important runtime note:
-
-- extracted workspaces now live in `../workspaces` relative to `backend/`
-- this prevents uvicorn/watchfiles reload loops during ZIP extraction
-
-Useful backend URLs:
-
-- API docs: `http://127.0.0.1:8000/docs`
-- health: `http://127.0.0.1:8000/health`
-- db health: `http://127.0.0.1:8000/health/db`
-
-### 3. Start the frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend URL:
-
-- `http://localhost:5173`
-
-## Environment Variables
-
-Backend configuration lives in `backend/.env`.
-
-An example file is included at [backend/.env.example](/Users/syamsaichippala/Projects/chaos-twin/backend/.env.example).
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@localhost:5432/chaostwin` | PostgreSQL connection string |
-| `SQL_ECHO` | `false` | Enable SQLAlchemy SQL logging |
-| `UPLOAD_DIR` | `../uploads` | ZIP archive storage |
-| `WORKSPACE_DIR` | `../workspaces` | Extracted repository workspace storage |
-| `OPENAI_API_KEY` | empty | Required for semantic search, indexing, and AI features |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Default chat/completion model |
-| `FRONTEND_ORIGINS` | unset | Allowed frontend origins |
-| `CORS_ALLOW_CREDENTIALS` | `true` | CORS credentials toggle |
-
-Frontend configuration:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `VITE_API_BASE_URL` | `http://127.0.0.1:8000` | Backend base URL |
-
-## Current Backend Routes
-
-### Project and health
-
-- `GET /health`
-- `GET /health/db`
-- `GET /projects`
-- `POST /projects`
-- `DELETE /projects/{project_id}`
-
-### Upload, scan, and indexing
-
-- `POST /projects/{project_id}/upload`
-- `POST /projects/{project_id}/scan`
-- `GET /projects/{project_id}/scan`
-- `GET /projects/{project_id}/indexing-status`
-- `GET /projects/{project_id}/search`
-
-### Understanding
-
-- `GET /projects/{project_id}/understanding`
-- `POST /projects/{project_id}/understanding/generate`
-- `POST /projects/{project_id}/understanding/chat`
-
-### Additional exploration routes
-
-- dashboard
-- graph generation
-- simulation
-- deep dive
-- routes
-- route analysis
-- sequence diagrams
-- code peek
-- system summary
-- insights
-
-## Frontend Product Flow
-
-### New project flow
-
-1. Create or upload a project from the Terra landing page.
-2. Upload a ZIP archive.
-3. Run scan.
-4. Indexing starts in the background.
-5. Understanding generation starts after indexing completes.
-6. Dashboard and understanding views update as processing finishes.
-
-### State persistence
-
-The frontend persists:
-
-- selected project id
-- active view
-
-This lets the app recover state across reloads.
-
-### Duplicate project handling
-
-If a user uploads a ZIP with the same project name twice, the UI can prompt to:
-
-- replace the old project
-- create a new one
-
-## Important Limits and Safeguards
-
-### Indexing hard cap
-
-Chaos Twin currently supports up to 500 source files per project for indexing.
-
-If more than 500 source files are extracted:
-
-- indexing aborts early
-- status is marked `failed`
-- a clear error message is stored in `indexing_status`
-- the frontend dashboard surfaces that failure
-
-### OpenAI concurrency limit
-
-To avoid OpenAI TPM spikes:
-
-- file classification and summarization batches are parallelized
-- concurrency is capped with a semaphore
-
-### Local artifact safety
-
-Ignored by git:
-
-- `.env`
-- local uploads
-- extracted workspaces
-- build output
-- local node/python environments
-
-Only example env files such as `.env.example` are tracked.
-
-## Development Notes
-
-### Why workspaces moved
-
-Extracted ZIPs are stored outside the backend tree:
-
-- old pattern: `backend/workspaces/`
-- current pattern: `../workspaces/`
-
-This prevents reload-triggered background task interruption in local dev.
-
-### Why indexing happens before understanding
-
-Understanding now depends on richer file context:
-
-- file summaries
-- dependency centrality
-- semantic selection of important files
-
-So the sequence is:
-
-1. scan
-2. index
-3. understanding
-
-### Search quality strategy
-
-Chaos Twin does not hardcode language-specific business rules for indexing.
-
-Instead it combines:
-
-- `enry` for source filtering
-- `tree-sitter` for import parsing where possible
-- regex fallback for unsupported languages
-- GPT classification and summarization based on actual code content
-
-## Local Safety
-
-- `backend/.env` is local-only and ignored by git.
-- `workspaces/` is ignored by git.
-- uploaded ZIPs are stored locally.
-- build artifacts are ignored.
-
-This repository is designed for local-first analysis unless you explicitly deploy it elsewhere.
-
-## Known Limitations
-
-- semantic search and AI features require `OPENAI_API_KEY`
-- indexing is capped at 500 source files
-- some route extraction and architecture inference is still heuristic
-- cloud deployments with ephemeral disks will not persist local uploads/workspaces unless extra storage is added
-
-## License
-
-MIT License
-
-Copyright (c) 2026 Chaos Twin
+- **Grounded AI Chat** — ask questions about the codebase, answers grounded on actual file embeddings (infrastructure already built, pgvector embeddings stored)
+- **Blast Radius Analysis** — "if I change this file, what else breaks?" using the dependency graph
+- **Code Peek** — click any step in a sequence diagram to see the actual lines of code
+- **Convention Detector** — infer implicit coding patterns across files, generate a "How We Do Things Here" doc
+- **GitHub integration** — connect a repo directly instead of uploading a ZIP
