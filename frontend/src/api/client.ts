@@ -45,7 +45,7 @@ export type RouteSequenceRecord = {
   created_at: string | null;
 };
 
-export const API_BASE = "https://chaos-twin-backend-updated.onrender.com";
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://chaos-twin-backend-updated.onrender.com";
 
 async function parseResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const body = await response.json().catch(() => null);
@@ -119,7 +119,7 @@ export async function fetchProjectStructure(projectId: string): Promise<Structur
   return parseResponse(response, "Failed to fetch structure map");
 }
 
-export async function sendDashboardChatMessage(projectId: string, messages: {role: string, content: string}[]): Promise<DashboardChatResponse> {
+export async function sendDashboardChatMessage(projectId: string, messages: { role: string, content: string }[]): Promise<DashboardChatResponse> {
   const response = await fetch(`${API_BASE}/projects/${projectId}/dashboard/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

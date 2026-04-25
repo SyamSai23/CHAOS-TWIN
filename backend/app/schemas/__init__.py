@@ -415,7 +415,15 @@ class UnderstandingChatRequest(BaseModel):
     section: str
     message: str
     history: Optional[list[dict[str, str]]] = None
+    page_context: Optional[dict[str, Any]] = None
+
+
+class UnderstandingChatSource(BaseModel):
+    file_path: str
+    file_type: str
+    summary: str
 
 
 class UnderstandingChatResponse(BaseModel):
     response: str
+    sources: list[UnderstandingChatSource] = Field(default_factory=list)

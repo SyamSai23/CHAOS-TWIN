@@ -50,6 +50,7 @@ export function useChaosTwinApp() {
   const [dbStatusDetail, setDbStatusDetail] = useState<string>("Checking database health...");
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -124,6 +125,21 @@ export function useChaosTwinApp() {
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleProjectCreated = (event: Event) => {
+      const customEvent = event as CustomEvent<Project>;
+      if (!customEvent.detail?.id) {
+        return;
+      }
+      setProjects((prev) => [customEvent.detail, ...prev.filter((project) => project.id !== customEvent.detail.id)]);
+    };
+
+    window.addEventListener("chaos-twin:project-created", handleProjectCreated as EventListener);
+    return () => {
+      window.removeEventListener("chaos-twin:project-created", handleProjectCreated as EventListener);
     };
   }, []);
 
@@ -206,6 +222,8 @@ export function useChaosTwinApp() {
       setProjects(data);
     } catch {
       console.error("Failed to fetch projects");
+    } finally {
+      setProjectsLoaded(true);
     }
   }
 
@@ -394,13 +412,6 @@ export function useChaosTwinApp() {
     } catch (error) {
       console.error("[upload] duplicate project resolution failed", error);
     }
-  }
-
-  function switchProject() {
-    clearStoredProjectSelection();
-    setSelectedProjectId(null);
-    setActiveView("projects");
-    navigateToPath("/projects");
   }
 
   async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -607,6 +618,7 @@ export function useChaosTwinApp() {
     isCreatingProjectFromZip,
     newProjectUploadError,
     path,
+    projectsLoaded,
     projectRefreshKeys,
     projects,
     resolveDuplicateProjectChoice,
@@ -642,7 +654,6 @@ export function useChaosTwinApp() {
     setShowCreateForm,
     setSimulationNode,
     statusDotClass,
-    switchProject,
     toggleDeepDiveEdges,
   };
 }

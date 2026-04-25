@@ -15,7 +15,7 @@ from app.models.sequence_diagram import SequenceDiagram  # noqa: F401 — regist
 from app.models.route_analysis import RouteAnalysis  # noqa: F401 — registers the model
 from app.models.project_model_snapshot import ProjectModelSnapshot  # noqa: F401 — registers the model
 from app.models.project_understanding import ProjectUnderstanding  # noqa: F401 — registers the model
-from app.routers import projects, uploads, scans, graphs, simulations, briefs, deep_dive, sequences, routes, analyze, system_summary, system_insights, code_peek, explanations, understanding
+from app.routers import projects, uploads, scans, graphs, simulations, briefs, deep_dive, sequences, routes, analyze, system_summary, system_insights, code_peek, explanations, understanding, github
 
 app = FastAPI(title="Chaos Twin API")
 
@@ -91,6 +91,7 @@ app.include_router(system_insights.router)
 app.include_router(code_peek.router)
 app.include_router(explanations.router)
 app.include_router(understanding.router)
+app.include_router(github.router)
 
 allow_origins, allow_origin_regex, allow_credentials = _cors_config()
 

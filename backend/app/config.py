@@ -34,3 +34,7 @@ WORKSPACE_DIR = _resolve_storage_dir("WORKSPACE_DIR", "../workspaces")
 # --- LLM / AI Brief settings ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")

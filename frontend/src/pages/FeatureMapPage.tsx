@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { API_BASE } from "../api/client";
+import AIChatBubble, { AskCopilotButton, requestAIChatPrompt } from "../components/AIChatBubble";
 
 type FeatureFile = {
   path: string;
@@ -299,6 +300,58 @@ export default function FeatureMapPage({ projectId }: FeatureMapPageProps) {
     () => (openContextCard ? featureContextMap[openContextCard] || null : null),
     [featureContextMap, openContextCard],
   );
+  const featureMapSuggestedQuestions = useMemo(() => {
+    if (selectedFeature) {
+      return [
+        `What does the ${selectedFeature.name} feature depend on?`,
+        `What breaks if I change ${selectedFeature.name}?`,
+        `Which files in ${selectedFeature.name} are most important?`,
+      ];
+    }
+
+    return [
+      "Which features are most tightly coupled?",
+      "Which feature is safest to modify?",
+      "What files are shared across the most features?",
+      "Which feature has the most external dependencies?",
+    ];
+  }, [selectedFeature]);
+  const featureMapPageContext = useMemo(() => {
+    if (selectedFeature) {
+      return {
+        page: "feature_map",
+        selected_feature: selectedFeature.name,
+        feature_description: selectedFeature.description,
+      };
+    }
+
+    return { page: "feature_map" };
+  }, [selectedFeature]);
+
+  function askAboutFeature(feature: Feature) {
+    requestAIChatPrompt({
+      question: `Tell me about the ${feature.name} feature. What does it do, what files are most important, and what should I know before touching it?`,
+      pageContext: {
+        page: "feature_map",
+        entity_type: "feature",
+        entity_name: feature.name,
+        entity_description: feature.description,
+        file_count: getFeatureFiles(feature).length,
+      },
+    });
+  }
+
+  function askAboutFile(fileName: string, filePath: string) {
+    requestAIChatPrompt({
+      question: `Tell me about ${fileName}. What is its role, what does it export, and what depends on it?`,
+      pageContext: {
+        page: "feature_map",
+        entity_type: "file",
+        entity_name: fileName,
+        entity_path: filePath,
+      },
+    });
+  }
 
   useLayoutEffect(() => {
     if (selectedFeature) {
@@ -826,10 +879,11 @@ export default function FeatureMapPage({ projectId }: FeatureMapPageProps) {
                                   }}
                                 />
 
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
+                              <div
+                                className="ask-copilot-anchor"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
                                     flexWrap: "wrap",
                                     gap: 6,
                                     minWidth: 0,
@@ -849,6 +903,10 @@ export default function FeatureMapPage({ projectId }: FeatureMapPageProps) {
                                   >
                                     {fileName}
                                   </span>
+                                  <AskCopilotButton
+                                    inline
+                                    onAsk={() => askAboutFile(fileName, file.path)}
+                                  />
 
                                   {alsoUsedBy.map((otherFeature) => {
                                     const otherIndex = (features || []).findIndex(
@@ -1061,6 +1119,7 @@ export default function FeatureMapPage({ projectId }: FeatureMapPageProps) {
 
                   return (
                     <div
+                      className="ask-copilot-anchor"
                       key={getFeatureKey(feature)}
                       ref={(element) => {
                         cardRefs.current[index] = element;
@@ -1107,6 +1166,7 @@ export default function FeatureMapPage({ projectId }: FeatureMapPageProps) {
                           transition: "transform 300ms ease, border-color 300ms ease, box-shadow 300ms ease, background 300ms ease",
                         }}
                       >
+                      <AskCopilotButton onAsk={() => askAboutFeature(feature)} />
                       <div>
                         <div style={{ fontFamily: "'Literata', serif", color: "#2e3230", fontSize: 18, fontWeight: 700 }}>
                           {feature.name}
@@ -1748,6 +1808,16 @@ export default function FeatureMapPage({ projectId }: FeatureMapPageProps) {
           </div>
         </div>
       ) : null}
+
+      <AIChatBubble
+        projectId={projectId}
+        context={{
+          page: "feature_map",
+          pageContext: featureMapPageContext,
+          resetKey: selectedFeature ? getFeatureKey(selectedFeature) : "feature-map",
+        }}
+        suggestedQuestions={featureMapSuggestedQuestions}
+      />
     </>
   );
 }

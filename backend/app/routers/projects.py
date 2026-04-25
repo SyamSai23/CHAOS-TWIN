@@ -1043,7 +1043,7 @@ def chat_project_dashboard(project_id: str, request: DashboardChatRequest, db: S
         return DashboardChatResponse(response="AI Architect is currently unavailable due to missing API key.")
 
     # Contextual boundary
-    dashboard_data = get_project_dashboard(project_id, db).model_dump()
+    dashboard_data = get_project_dashboard(project_id, db=db).model_dump()
     
     system_prompt = f"""You are the 'AI Architect' for a project named {dashboard_data['project_name']}.
 Dashboard Context:

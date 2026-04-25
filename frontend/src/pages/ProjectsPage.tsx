@@ -153,30 +153,13 @@ export default function ProjectsPage(_props: ProjectsPageProps) {
             Manage your uploaded codebases.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => navigateTo("/")}
-          style={{
-            background: "#4a7c59",
-            color: "#fff",
-            border: "none",
-            borderRadius: 10,
-            padding: "10px 16px",
-            fontSize: 14,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontFamily: "'Nunito Sans', sans-serif",
-          }}
-        >
-          Upload New Project
-        </button>
       </div>
 
       {projects.length === 0 ? (
         <div style={{ minHeight: 360, display: "grid", placeItems: "center", textAlign: "center", gap: 12 }}>
           <FolderOpen size={34} style={{ color: "#74796e" }} />
           <div style={{ fontFamily: "'Literata', serif", fontSize: 24, color: "#2e3230" }}>No projects yet</div>
-          <div style={{ color: "#74796e", fontSize: 14 }}>Upload a codebase to get started.</div>
+          <div style={{ color: "#74796e", fontSize: 14 }}>Use the Add Project button in the top-right to get started.</div>
           <button
             type="button"
             onClick={() => navigateTo("/")}
@@ -193,7 +176,7 @@ export default function ProjectsPage(_props: ProjectsPageProps) {
               fontFamily: "'Nunito Sans', sans-serif",
             }}
           >
-            Upload a project
+            Go to home
           </button>
         </div>
       ) : (

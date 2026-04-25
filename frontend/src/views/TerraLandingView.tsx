@@ -1,36 +1,14 @@
 import { useEffect, useState } from "react";
-import { FolderUp, GitBranch, Share2, Sparkles, Wand2, Box, PenTool, Loader2 } from "lucide-react";
+import { Share2, Sparkles, Wand2, Box, PenTool } from "lucide-react";
 import "./TerraLandingView.css";
 
 interface TerraLandingViewProps {
-  showCreateForm: boolean;
-  name: string;
-  setName: (v: string) => void;
-  path: string;
-  setPath: (v: string) => void;
-  handleSubmit: (e: React.FormEvent) => void;
-  handleCancelCreate: () => void;
-  createError: string | null;
-  isUploading: boolean;
-  uploadError: string | null;
-  entryIntent: "zip" | "github" | null;
-  onUploadZip: () => void;
+  onAddProject: () => void;
   onManageProjects: () => void;
 }
 
 export default function TerraLandingView({
-  showCreateForm,
-  name,
-  setName,
-  path,
-  setPath,
-  handleSubmit,
-  handleCancelCreate,
-  createError,
-  isUploading,
-  uploadError,
-  entryIntent,
-  onUploadZip,
+  onAddProject,
   onManageProjects,
 }: TerraLandingViewProps) {
   const [scrolled, setScrolled] = useState(false);
@@ -55,11 +33,6 @@ export default function TerraLandingView({
             <a href="#" className="terra-nav-link">Documentation</a>
             <a href="#" className="terra-nav-link">Pricing</a>
           </div>
-          <div>
-            <button className="terra-btn terra-btn-primary">
-              Connect with GitHub
-            </button>
-          </div>
         </div>
       </nav>
 
@@ -75,28 +48,9 @@ export default function TerraLandingView({
             Chaos Twin maps complex codebases into living architecture graphs. Trace data flow, identify bottlenecks, and generate deep insights without leaving your environment.
           </p>
           <div className="terra-hero-actions">
-            <button className="terra-btn terra-btn-primary">
-              <GitBranch size={18} /> Connect with GitHub
+            <button className="terra-btn terra-btn-primary" onClick={onAddProject}>
+              Add Project
             </button>
-            <div style={{ position: 'relative' }}>
-              <style dangerouslySetInnerHTML={{__html: `\n                @keyframes terra-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }\n                .terra-spinner { animation: terra-spin 1s linear infinite; }\n              `}} />
-              <button 
-                className="terra-btn terra-btn-secondary" 
-                onClick={onUploadZip}
-                disabled={isUploading}
-              >
-                {isUploading ? (
-                  <><Loader2 size={18} className="terra-spinner" /> Analyzing...</>
-                ) : (
-                  <><FolderUp size={18} /> Upload Codebase</>
-                )}
-              </button>
-              {uploadError && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '8px', color: '#d94141', fontSize: '0.85rem', fontWeight: 600, textAlign: 'center' }}>
-                  {uploadError}
-                </div>
-              )}
-            </div>
           </div>
           <button
             type="button"
@@ -240,10 +194,6 @@ RoleMiddleware.ts`}
           <h2>Ready to see the forest, not just the trees?</h2>
           <p>Connect your repository today and experience the clarity of a high-fidelity codebase analysis.</p>
           
-          <button className="terra-btn terra-cta-btn">
-            <GitBranch size={18} /> Connect with GitHub
-          </button>
-
           <div className="terra-trust">
             Trusted by engineering teams at scale. Free to start.
           </div>
@@ -267,36 +217,6 @@ RoleMiddleware.ts`}
           </div>
         </footer>
       </section>
-
-      {showCreateForm && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(250, 246, 240, 0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#ffffff', padding: '40px', borderRadius: '24px', boxShadow: '0 8px 30px rgba(46,50,48,0.1)', width: '100%', maxWidth: '420px', border: '1px solid rgba(46,50,48,0.08)' }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: '1.4rem' }}>
-              {entryIntent === 'github' ? 'Prepare GitHub Shell' : 'Create Project Area'}
-            </h3>
-            <p style={{ margin: '0 0 24px', fontSize: '0.9rem', color: '#545e57' }}>
-              {entryIntent === 'github' ? 'Create a project name to receive the staged GitHub sync.' : 'First, create a shell. Then you will upload the ZIP archive from the workspace.'}
-            </p>
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Project Name</label>
-                <input required type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Acme API" autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(46,50,48,0.15)', background: '#f5f1e8', fontFamily: 'inherit', fontSize: '1rem', outline: 'none' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Workspace Path</label>
-                <input required type="text" value={path} onChange={e => setPath(e.target.value)} placeholder="e.g. /projects/acme-api"
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(46,50,48,0.15)', background: '#f5f1e8', fontFamily: 'inherit', fontSize: '1rem', outline: 'none' }} />
-              </div>
-              {createError && <p style={{ margin: 0, color: '#d94141', fontSize: '0.85rem', fontWeight: 600 }}>{createError}</p>}
-              <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                <button type="submit" className="terra-btn terra-btn-primary" style={{ flex: 1 }}>Create Project</button>
-                <button type="button" onClick={handleCancelCreate} className="terra-btn terra-btn-secondary" style={{ padding: '12px' }}>Cancel</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

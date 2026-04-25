@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { MessageCircle, Send, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { sendDashboardChatMessage, sendUnderstandingChatMessage } from "../api/client";
+import { API_BASE } from "../api/client";
 import "./AIChatBubble.css";
 
-export type AIContextPage = "dashboard" | "understanding";
+export type AIContextPage =
+  | "dashboard"
+  | "understanding"
+  | "feature_map"
+  | "api_explorer"
+  | "sequence_diagram";
 export type AIContextSection =
   | "project_story"
   | "system_map"
@@ -20,16 +25,31 @@ interface AIChatBubbleProps {
     section?: AIContextSection;
     data?: unknown;
     projectName?: string;
+    pageContext?: Record<string, unknown> | null;
+    resetKey?: string;
   };
+  suggestedQuestions?: string[];
 }
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type AskCopilotDetail = {
+  question: string;
+  pageContext?: Record<string, unknown> | null;
+};
+type AskCopilotButtonProps = {
+  onAsk: () => void;
+  inline?: boolean;
+  className?: string;
+  style?: CSSProperties;
+};
+const ASK_COPILOT_EVENT = "ai-chat:ask";
 
 const SUGGESTED_QUESTIONS: Record<AIContextPage | AIContextSection, string[]> = {
   dashboard: [
-    "What does this project do in simple terms?",
-    "What are the main technologies used?",
-    "How complex is this codebase?",
+    "Where should I start reading this codebase?",
+    "What is the riskiest part of this project?",
+    "What external services does this project depend on?",
+    "What are the main entry points?",
   ],
   understanding: [
     "What should I understand first?",
@@ -65,6 +85,23 @@ const SUGGESTED_QUESTIONS: Record<AIContextPage | AIContextSection, string[]> = 
     "How are these terms related?",
     "Which concept is most important to understand?",
     "How does this compare to standard patterns?",
+  ],
+  feature_map: [
+    "Which features are most tightly coupled?",
+    "Which feature is safest to modify?",
+    "What files are shared across the most features?",
+    "Which feature has the most external dependencies?",
+  ],
+  api_explorer: [
+    "Which route is most complex?",
+    "Which routes touch the database?",
+    "Are there any routes without authentication?",
+  ],
+  sequence_diagram: [
+    "What error handling exists in this flow?",
+    "Which step is most likely to fail?",
+    "How many database calls does this route make?",
+    "What would a junior developer misunderstand about this flow?",
   ],
 };
 
@@ -106,42 +143,186 @@ function toUnderstandingBackendSection(section?: AIContextSection): string {
   }
 }
 
-export default function AIChatBubble({ projectId, context }: AIChatBubbleProps) {
+function getContextSubtitle(context: AIChatBubbleProps["context"]) {
+  if (context.page === "dashboard") {
+    return `Ask about ${context.projectName ?? "this project"}`;
+  }
+  if (context.page === "understanding") {
+    return `Ask about the ${getUnderstandingSectionLabel(context.section)}`;
+  }
+  if (context.page === "feature_map") {
+    const featureName = typeof context.pageContext?.["selected_feature"] === "string"
+      ? context.pageContext["selected_feature"]
+      : null;
+    return featureName ? `Ask about ${featureName}` : "Ask about the feature map";
+  }
+  if (context.page === "api_explorer") {
+    const routeMethod = typeof context.pageContext?.["route_method"] === "string"
+      ? context.pageContext["route_method"]
+      : null;
+    const routePath = typeof context.pageContext?.["route_path"] === "string"
+      ? context.pageContext["route_path"]
+      : null;
+    return routeMethod && routePath ? `Ask about ${routeMethod} ${routePath}` : "Ask about the API explorer";
+  }
+  if (context.page === "sequence_diagram") {
+    const routeMethod = typeof context.pageContext?.["route_method"] === "string"
+      ? context.pageContext["route_method"]
+      : null;
+    const routePath = typeof context.pageContext?.["route_path"] === "string"
+      ? context.pageContext["route_path"]
+      : null;
+    return routeMethod && routePath ? `Ask about ${routeMethod} ${routePath}` : "Ask about this request flow";
+  }
+  return "Ask about this codebase";
+}
+
+function getInitialMessage(context: AIChatBubbleProps["context"]) {
+  if (context.page === "dashboard") {
+    return `I can help explain ${context.projectName ?? "this project"} in plain English.`;
+  }
+  if (context.page === "understanding") {
+    return `I can answer questions about the ${getUnderstandingSectionLabel(context.section)} section.`;
+  }
+  if (context.page === "feature_map") {
+    const featureName = typeof context.pageContext?.["selected_feature"] === "string"
+      ? context.pageContext["selected_feature"]
+      : null;
+    return featureName
+      ? `I can help you understand how ${featureName} fits into the rest of the codebase.`
+      : "I can help you understand how the major features connect and where change risk lives.";
+  }
+  if (context.page === "api_explorer") {
+    const routeMethod = typeof context.pageContext?.["route_method"] === "string"
+      ? context.pageContext["route_method"]
+      : null;
+    const routePath = typeof context.pageContext?.["route_path"] === "string"
+      ? context.pageContext["route_path"]
+      : null;
+    return routeMethod && routePath
+      ? `I can explain what happens in ${routeMethod} ${routePath} and how it fits into the API.`
+      : "I can help you inspect route complexity, data access, and API behavior.";
+  }
+  if (context.page === "sequence_diagram") {
+    return "I can walk through this execution flow step by step and call out the risky parts.";
+  }
+  return "I can help explain this codebase in plain English.";
+}
+
+function getBackendSection(context: AIChatBubbleProps["context"]) {
+  if (context.page === "understanding") {
+    return toUnderstandingBackendSection(context.section);
+  }
+  return context.page;
+}
+
+async function postChat<T>(url: string, payload: Record<string, unknown>, fallbackMessage: string): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.detail || body?.message || fallbackMessage);
+  }
+  return body as T;
+}
+
+export function requestAIChatPrompt(detail: AskCopilotDetail) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent<AskCopilotDetail>(ASK_COPILOT_EVENT, { detail }));
+}
+
+export function AskCopilotButton({ onAsk, inline = false, className = "", style }: AskCopilotButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`ask-copilot-button ${inline ? "inline" : "corner"} ${className}`.trim()}
+      title="Ask Copilot about this"
+      aria-label="Ask Copilot about this"
+      onClick={(event) => {
+        event.stopPropagation();
+        onAsk();
+      }}
+      style={style}
+    >
+      <span aria-hidden="true">💬</span>
+    </button>
+  );
+}
+
+export default function AIChatBubble({ projectId, context, suggestedQuestions = [] }: AIChatBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [hasConversation, setHasConversation] = useState(false);
+  const [overridePageContext, setOverridePageContext] = useState<Record<string, unknown> | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const lastMessageRef = useRef<HTMLDivElement | null>(null);
 
-  const contextKey = `${context.page}:${context.section ?? "dashboard"}`;
-  const subtitle = useMemo(() => {
-    if (context.page === "dashboard") {
-      return `Ask about ${context.projectName ?? "this project"}`;
-    }
-    return `Ask about the ${getUnderstandingSectionLabel(context.section)}`;
-  }, [context.page, context.projectName, context.section]);
+  const contextKey = useMemo(
+    () =>
+      [
+        context.page,
+        context.section ?? "",
+        context.resetKey ?? "",
+        JSON.stringify(context.pageContext ?? {}),
+        suggestedQuestions.join("|"),
+      ].join(":"),
+    [context.page, context.pageContext, context.resetKey, context.section, suggestedQuestions],
+  );
+  const subtitle = useMemo(() => getContextSubtitle(context), [context]);
 
-  const initialMessage = useMemo(() => {
-    if (context.page === "dashboard") {
-      return `I can help explain ${context.projectName ?? "this project"} in plain English.`;
-    }
-    return `I can answer questions about the ${getUnderstandingSectionLabel(context.section)} section.`;
-  }, [context.page, context.projectName, context.section]);
+  const initialMessage = useMemo(() => getInitialMessage(context), [context]);
+  const effectivePageContext = overridePageContext ?? context.pageContext ?? null;
 
   const suggestions = useMemo(() => {
+    if (suggestedQuestions.length > 0) {
+      return suggestedQuestions;
+    }
     if (context.page === "dashboard") {
       return SUGGESTED_QUESTIONS.dashboard;
     }
-    return SUGGESTED_QUESTIONS[context.section ?? "project_story"];
-  }, [context.page, context.section]);
+    if (context.page === "understanding") {
+      return SUGGESTED_QUESTIONS[context.section ?? "project_story"];
+    }
+    return SUGGESTED_QUESTIONS[context.page];
+  }, [context.page, context.section, suggestedQuestions]);
 
   useEffect(() => {
     setMessages([{ role: "assistant", content: initialMessage }]);
     setHasConversation(false);
     setInput("");
+    setOverridePageContext(null);
   }, [contextKey, initialMessage]);
+
+  useEffect(() => {
+    const handleAsk = (event: Event) => {
+      const customEvent = event as CustomEvent<AskCopilotDetail>;
+      const detail = customEvent.detail;
+      if (!detail?.question) {
+        return;
+      }
+
+      const nextPageContext = detail.pageContext ?? null;
+      setOverridePageContext(nextPageContext);
+      setIsOpen(true);
+      setInput(detail.question);
+      window.setTimeout(() => {
+        void sendMessage(detail.question, nextPageContext);
+      }, 0);
+    };
+
+    window.addEventListener(ASK_COPILOT_EVENT, handleAsk as EventListener);
+    return () => {
+      window.removeEventListener(ASK_COPILOT_EVENT, handleAsk as EventListener);
+    };
+  });
 
   useEffect(() => {
     if (!messagesRef.current) return;
@@ -152,9 +333,10 @@ export default function AIChatBubble({ projectId, context }: AIChatBubbleProps) 
     lastMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, loading]);
 
-  async function sendMessage(raw: string) {
+  async function sendMessage(raw: string, pageContextOverride?: Record<string, unknown> | null) {
     const text = raw.trim();
     if (!text || loading) return;
+    const requestPageContext = pageContextOverride ?? effectivePageContext;
 
     const nextMessages: ChatMessage[] = [...messages, { role: "user", content: text }];
     setMessages(nextMessages);
@@ -165,12 +347,28 @@ export default function AIChatBubble({ projectId, context }: AIChatBubbleProps) 
     try {
       if (context.page === "dashboard") {
         const payload = nextMessages.filter((m, i) => i !== 0 || m.role !== "assistant");
-        const res = await sendDashboardChatMessage(projectId, payload);
+        const res = await postChat<{ response: string }>(
+          `${API_BASE}/projects/${projectId}/dashboard/chat`,
+          {
+            messages: payload,
+            page_context: requestPageContext,
+          },
+          "Failed to send chat message",
+        );
         setMessages([...nextMessages, { role: "assistant", content: res.response }]);
       } else {
-        const section = toUnderstandingBackendSection(context.section);
+        const section = getBackendSection(context);
         const history = nextMessages.filter((m) => m.role === "user" || m.role === "assistant");
-        const res = await sendUnderstandingChatMessage(projectId, section, text, history);
+        const res = await postChat<{ response: string }>(
+          `${API_BASE}/projects/${projectId}/understanding/chat`,
+          {
+            section,
+            message: text,
+            history,
+            page_context: requestPageContext,
+          },
+          "Failed to send understanding chat message",
+        );
         setMessages([...nextMessages, { role: "assistant", content: res.response }]);
       }
     } catch {

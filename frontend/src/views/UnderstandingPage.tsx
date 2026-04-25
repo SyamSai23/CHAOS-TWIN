@@ -15,7 +15,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { API_BASE, fetchProjectUnderstanding } from "../api/client";
 import type { ProjectUnderstandingResponse } from "../types";
-import AIChatBubble, { type AIContextSection } from "../components/AIChatBubble";
+import AIChatBubble, { AskCopilotButton, requestAIChatPrompt, type AIContextSection } from "../components/AIChatBubble";
 import "./UnderstandingPage.css";
 
 interface UnderstandingPageProps {
@@ -574,6 +574,59 @@ export default function UnderstandingPage({ projectId }: UnderstandingPageProps)
     : chatSection === "gotchas" ? gotchas
     : chatSection === "glossary" ? sortedGlossary
     : data?.project_story ?? "";
+  const understandingSuggestedQuestions = useMemo(() => {
+    switch (chatSection) {
+      case "project_story":
+        return [
+          "What problem does this project solve?",
+          "Who would use this?",
+        ];
+      case "system_map":
+        return [
+          "How do these components communicate?",
+          "What is the most critical component?",
+        ];
+      case "data_journey":
+        return [
+          "What could go wrong in this flow?",
+          "How is authentication handled?",
+        ];
+      case "key_decisions":
+        return [
+          "Were there better alternatives to these decisions?",
+          "What would you change?",
+        ];
+      case "gotchas":
+        return [
+          "How serious are these issues?",
+          "Which gotcha is most likely to affect me?",
+        ];
+      case "glossary":
+        return [
+          "How are these terms related?",
+          "Which concept should I understand first?",
+        ];
+      default:
+        return [
+          "What problem does this project solve?",
+          "Who would use this?",
+        ];
+    }
+  }, [chatSection]);
+
+  function askAboutUnderstandingFile(filePath: string, activeSectionOverride: AIContextSection = chatSection) {
+    const fileName = filePath.split("/").pop() || filePath;
+    requestAIChatPrompt({
+      question: `Tell me about ${fileName}`,
+      pageContext: {
+        page: "understanding",
+        active_section: activeSectionOverride,
+        entity_type: "file",
+        entity_name: fileName,
+        entity_path: filePath,
+      },
+    });
+  }
   const projectStoryDepthContent =
     depth === "beginner"
       ? data?.project_story_beginner
@@ -1024,7 +1077,7 @@ export default function UnderstandingPage({ projectId }: UnderstandingPageProps)
                             borderBottom: "1px solid rgba(196,200,188,0.35)",
                           }}
                         >
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                          <div className="ask-copilot-anchor" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                             <span
                               style={{
                                 width: 8,
@@ -1047,6 +1100,10 @@ export default function UnderstandingPage({ projectId }: UnderstandingPageProps)
                             >
                               {file.path}
                             </span>
+                            <AskCopilotButton
+                              inline
+                              onAsk={() => askAboutUnderstandingFile(file.path, "system_map")}
+                            />
                           </div>
                           <div
                             style={{
@@ -1377,7 +1434,11 @@ export default function UnderstandingPage({ projectId }: UnderstandingPageProps)
                       {(Array.isArray(term.used_in) ? term.used_in : []).map((u) => (
                         <span
                           key={u}
+                          className="ask-copilot-anchor"
                           style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
                             background: "#f5f1ea",
                             border: "1px solid #c4c8bc",
                             borderRadius: 4,
@@ -1388,6 +1449,10 @@ export default function UnderstandingPage({ projectId }: UnderstandingPageProps)
                           }}
                         >
                           {u.split("/").pop()}
+                          <AskCopilotButton
+                            inline
+                            onAsk={() => askAboutUnderstandingFile(u, "glossary")}
+                          />
                         </span>
                       ))}
                     </div>
@@ -1454,7 +1519,10 @@ export default function UnderstandingPage({ projectId }: UnderstandingPageProps)
           page: "understanding",
           section: chatSection,
           data: chatSectionData,
+          pageContext: { page: "understanding", active_section: chatSection },
+          resetKey: chatSection,
         }}
+        suggestedQuestions={understandingSuggestedQuestions}
       />
     </div>
   );

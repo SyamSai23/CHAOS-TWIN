@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchProjectDashboard, fetchProjectIndexingStatus, fetchProjectUnderstanding } from "../api/client";
 import type { IndexingStatusResponse, ProjectDashboardResponse } from "../types";
 import type { NavItem } from "../app/navigation";
@@ -50,6 +50,29 @@ export default function ProjectDashboard({ projectId, onNavigate }: ProjectDashb
 
     return () => clearInterval(interval);
   }, [projectId]);
+
+  const dashboardSuggestedQuestions = useMemo(
+    () => [
+      "Where should I start reading this codebase?",
+      "What is the riskiest part of this project?",
+      "What external services does this project depend on?",
+      "What are the main entry points?",
+    ],
+    [],
+  );
+
+  const dashboardPageContext = useMemo(() => {
+    if (!data) {
+      return { page: "dashboard" };
+    }
+
+    return {
+      page: "dashboard",
+      project_name: data.project_name,
+      tech_stack: (data.languages || []).map((language) => language.name),
+      entry_points: (data.routes_preview || []).slice(0, 8).map((route) => `${route.method} ${route.path}`),
+    };
+  }, [data]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -259,7 +282,14 @@ export default function ProjectDashboard({ projectId, onNavigate }: ProjectDashb
 
       <AIChatBubble
         projectId={projectId}
-        context={{ page: "dashboard", data, projectName: data.project_name }}
+        context={{
+          page: "dashboard",
+          data,
+          projectName: data.project_name,
+          pageContext: dashboardPageContext,
+          resetKey: data.project_name,
+        }}
+        suggestedQuestions={dashboardSuggestedQuestions}
       />
 
     </div>
